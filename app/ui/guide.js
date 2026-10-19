@@ -7,6 +7,12 @@
 const HASH_PREFIX = "#/guide/";
 const APP_URL = new URL("../../", import.meta.url);
 const INDEX_URL = new URL("docs/index.json", APP_URL);
+const INDEX_URL_ZH = new URL("docs/index.zh.json", APP_URL);
+
+// The Guide renders localized Markdown when the UI language is Chinese.
+function indexUrl() {
+  return window.ofI18n && window.ofI18n.getLang() === "zh" ? INDEX_URL_ZH : INDEX_URL;
+}
 
 function escapeHtml(text) {
   return text
@@ -343,7 +349,7 @@ export function mountGuide({ sidebar, content, header }) {
     loadingIndex = (async () => {
       sidebar.innerHTML = '<p class="guide-loading">Loading…</p>';
       try {
-        const res = await fetch(INDEX_URL);
+        const res = await fetch(indexUrl());
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const tree = data.tree || [];
@@ -368,6 +374,21 @@ export function mountGuide({ sidebar, content, header }) {
     return loadingIndex;
   }
   loadIndex();
+
+  // Re-render the Guide when the UI language changes (docs/*.zh.md).
+  window.addEventListener("of-lang-changed", () => {
+    ready = false;
+    loadingIndex = null;
+    activeId = null;
+    fetchCache.clear();
+    pages.clear();
+    linkById.clear();
+    pageByUrl.clear();
+    firstRef.id = null;
+    loadIndex().then(() => {
+      if (ready) loadPage(defaultId);
+    });
+  });
 
   async function show() {
     await loadIndex();

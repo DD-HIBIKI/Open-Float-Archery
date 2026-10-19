@@ -1,0 +1,29 @@
+{
+  "tree": [
+    {
+      "type": "folder",
+      "name": "参考",
+      "path": "reference",
+      "children": [
+        {
+          "type": "file",
+          "name": "BLE 控制命令",
+          "id": "reference/ble-commands",
+          "path": "docs/reference/ble-commands.zh.md"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "功能状态",
+      "id": "feature-status",
+      "path": "docs/feature-status.md"
+    },
+    {
+      "type": "file",
+      "name": "快速上手",
+      "id": "quick-start",
+      "path": "docs/quick-start.zh.md"
+    }
+  ]
+}

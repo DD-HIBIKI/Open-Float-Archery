@@ -1,4 +1,4 @@
-const CACHE_NAME = "openfloat-v200";
+const CACHE_NAME = "openfloat-v201";
 const ASSETS = [
   "./",
   "./index.html",
@@ -16,6 +16,8 @@ const ASSETS = [
   "./vendor/three/examples/jsm/controls/OrbitControls.js",
   "./vendor/three/examples/jsm/utils/BufferGeometryUtils.js",
   "./app/main.js",
+  "./app/i18n.js",
+  "./app/i18n/dict-zh.js",
   "./app/data/sample-data.js",
   "./app/data/sample-shots-data.js",
   "./app/core/db.js",
