@@ -26,14 +26,14 @@ import {
 import { initDb, getAll, put, removeSavedShots } from "./core/db.js?v=shot-store-176";
 import { CloudSyncAdapter } from "./telemetry/sync.js?v=shot-store-176";
 import { mountTraining } from "./ui/training.js?v=shot-store-200";
-import { mountGuide } from "./ui/guide.js?v=shot-store-161";
+import { mountGuide } from "./ui/guide.js?v=shot-store-203";
 import { initDataBackup } from "./ui/data-backup.js?v=shot-store-176";
 import { initHistory } from "./ui/history.js?v=shot-store-202";
 import { mountBowProfiles } from "./ui/bow-profiles.js?v=shot-store-176";
 import { mountBrowserSupport } from "./ui/browser-support.js?v=shot-store-178";
 import { generateSampleData, SAMPLE_DEVICE_ID } from "./data/sample-data.js?v=shot-store-137";
 
-const APP_BUILD = "shot-store-202";
+const APP_BUILD = "shot-store-203";
 const MODEL_ATTITUDE_VERSION = 3;
 
 const ELEMENT_IDS = [

@@ -25,6 +25,45 @@ function escapeAttribute(text) {
   return escapeHtml(text).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
+// Split a GitHub-style table row into cells. Pipes inside inline code and
+// backslash-escaped pipes are content, not separators.
+function splitTableRow(row) {
+  const cells = [];
+  let cell = "";
+  let inCode = false;
+  let escaped = false;
+  const body = row.trim().replace(/^\|/, "").replace(/\|\s*$/, "");
+  for (const ch of body) {
+    if (escaped) {
+      cell += ch;
+      escaped = false;
+    } else if (ch === "\\") {
+      escaped = true;
+    } else if (ch === "`") {
+      inCode = !inCode;
+      cell += ch;
+    } else if (ch === "|" && !inCode) {
+      cells.push(cell.trim());
+      cell = "";
+    } else {
+      cell += ch;
+    }
+  }
+  cells.push(cell.trim());
+  return cells;
+}
+
+function tableAlignment(separatorCells) {
+  return separatorCells.map((cell) => {
+    const left = cell.startsWith(":");
+    const right = cell.endsWith(":");
+    if (left && right) return "center";
+    if (right) return "right";
+    if (left) return "left";
+    return "";
+  });
+}
+
 function guideHash(id, anchor = "") {
   return HASH_PREFIX + id.split("/").map(encodeURIComponent).join("/") + anchor;
 }
@@ -61,8 +100,8 @@ function renderInline(text, options) {
 }
 
 // Minimal block-level Markdown -> HTML. Supports headings, fenced code blocks,
-// blockquotes, ordered/unordered lists, horizontal rules, paragraphs, links,
-// and images - the subset used by the guide content in docs/.
+// blockquotes, ordered/unordered lists, tables, horizontal rules, paragraphs,
+// links, and images - the subset used by the guide content in docs/.
 export function renderMarkdown(md, options = {}) {
   const lines = md.replace(/\r\n/g, "\n").split("\n");
   const html = [];
@@ -101,6 +140,38 @@ export function renderMarkdown(md, options = {}) {
       continue;
     }
 
+    // Table (header row + separator row + body rows)
+    if (/^\s*\|/.test(line)) {
+      const header = splitTableRow(line);
+      const separator = i + 1 < lines.length && /^\s*\|/.test(lines[i + 1])
+        ? splitTableRow(lines[i + 1])
+        : [];
+      if (separator.length && separator.every((cell) => /^:?-{2,}:?$/.test(cell))) {
+        const align = tableAlignment(separator);
+        const cellStyle = (index) => (align[index] ? ` style="text-align:${align[index]}"` : "");
+        i += 2;
+        const rows = [];
+        while (i < lines.length && /^\s*\|/.test(lines[i])) {
+          rows.push(splitTableRow(lines[i]));
+          i += 1;
+        }
+        html.push("<table><thead><tr>");
+        header.forEach((cell, index) => {
+          html.push(`<th${cellStyle(index)}>${renderInline(cell, options)}</th>`);
+        });
+        html.push("</tr></thead><tbody>");
+        rows.forEach((row) => {
+          html.push("<tr>");
+          header.forEach((_, index) => {
+            html.push(`<td${cellStyle(index)}>${renderInline(row[index] ?? "", options)}</td>`);
+          });
+          html.push("</tr>");
+        });
+        html.push("</tbody></table>");
+        continue;
+      }
+    }
+
     // Heading
     const heading = line.match(/^(#{1,4})\s+(.*)$/);
     if (heading) {
@@ -133,6 +204,7 @@ export function renderMarkdown(md, options = {}) {
       /^(#{1,4})\s+/.test(l) ||
       /^---+\s*$/.test(l) ||
       /^>\s?/.test(l) ||
+      /^\s*\|/.test(l) ||
       /^[-*]\s+/.test(l) ||
       /^\d+\.\s+/.test(l);
 

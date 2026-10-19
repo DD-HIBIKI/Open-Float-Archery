@@ -53,6 +53,37 @@ test("guide content cannot introduce executable URL schemes or HTML attributes",
   assert.match(html, /&amp;value=/);
 });
 
+test("tables render as real tables with inline formatting and literal pipes", () => {
+  const md = [
+    "| 项 | 数值 |",
+    "| --- | ---: |",
+    "| **加粗** | `a|b` |",
+    "| 反斜杠 \\| 竖线 | 42 |",
+  ].join("\n");
+  const html = render(md);
+  assert.match(html, /<table><thead><tr>\s*<th>项<\/th>/);
+  assert.match(html, /<th style="text-align:right">数值<\/th>/);
+  assert.match(html, /<td><strong>加粗<\/strong><\/td>/);
+  assert.match(html, /<td style="text-align:right"><code>a\|b<\/code><\/td>/);
+  assert.match(html, /<td>反斜杠 \| 竖线<\/td>/);
+  assert.doesNotMatch(html, /<p>\|/);
+});
+
+test("a pipe paragraph without a separator row stays a paragraph, and lists keep following tables", () => {
+  assert.match(render("| not a table |"), /<p>\| not a table \|<\/p>/);
+  const html = render("| A |\n| --- |\n| 1 |\n\n- after");
+  assert.match(html, /<\/table>\n<ul>/);
+});
+
+test("the shipped handbook renders its tables and headings", () => {
+  const manual = renderMarkdown(readFileSync(new URL("../docs/manual.zh.md", import.meta.url), "utf8"), {
+    pageUrl: "https://example.com/openfloat/docs/manual.zh.md", pages,
+  });
+  assert.match(manual, /<h1 id="openfloat-[^"]+">/);
+  assert.ok((manual.match(/<table>/g) || []).length >= 10);
+  assert.match(manual, /<pre><code>/);
+});
+
 test("links in the shipped guides resolve without losing their existing block formatting", () => {
   const quick = renderMarkdown(readFileSync(new URL("../docs/quick-start.md", import.meta.url), "utf8"), {
     pageUrl: "https://example.com/openfloat/docs/quick-start.md", pages,
@@ -90,7 +121,10 @@ function guideFixture(t, indexFailures = 0) {
     };
   }
   const location = { hash: "" };
-  for (const [key, value] of Object.entries({ window: { location }, document: { createElement: element } })) {
+  for (const [key, value] of Object.entries({
+    window: { location, addEventListener() {}, removeEventListener() {} },
+    document: { createElement: element },
+  })) {
     const original = Object.getOwnPropertyDescriptor(globalThis, key);
     Object.defineProperty(globalThis, key, { configurable: true, value });
     t.after(() => {

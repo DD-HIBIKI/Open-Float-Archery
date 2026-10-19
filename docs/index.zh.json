@@ -1,6 +1,12 @@
 {
   "tree": [
     {
+      "type": "file",
+      "name": "使用手册",
+      "id": "manual",
+      "path": "docs/manual.zh.md"
+    },
+    {
       "type": "folder",
       "name": "参考",
       "path": "reference",

@@ -2760,6 +2760,34 @@ canvas,
   margin: 10px 0;
 }
 
+.guide-content table {
+  width: 100%;
+  margin: 14px 0;
+  border-collapse: collapse;
+  font-size: 13px;
+  display: block;
+  overflow-x: auto;
+}
+
+.guide-content th,
+.guide-content td {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.guide-content th {
+  background: var(--panel-soft);
+  color: var(--cyan);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.guide-content tbody tr:nth-child(even) {
+  background: rgba(53, 199, 232, 0.04);
+}
+
 .guide-content img {
   display: block;
   max-width: 100%;
