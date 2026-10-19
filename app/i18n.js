@@ -30,6 +30,18 @@ const SKIP_TAGS = new Set([
 
 const ATTRS = ["title", "placeholder", "aria-label", "alt", "aria-description", "aria-valuetext"];
 
+/* 未命中字典的英文文案会记在这里，供 scripts/i18n_missing_probe.py 收割 */
+const missingStrings = new Set();
+function recordMissing(text) {
+  if (missingStrings.size > 800) return;
+  const t = normalize(text);
+  if (t.length < 3 || t.length > 300) return;
+  if (!HAS_ASCII_LETTER.test(t)) return;
+  if (HAS_CJK.test(t)) return;
+  if (t.split(" ").length < 2) return; // 单词多半是品牌/单位，先不记
+  missingStrings.add(t);
+}
+
 /** 结构化匹配：前缀键（英文原文以 ":" 结尾，后面常跟数字） */
 const PREFIX_KEYS = Object.keys(dict)
   .filter((k) => k.endsWith(":") || k.endsWith("："))
@@ -93,6 +105,19 @@ const PATTERNS = [
   [/^Could not delete captures:\s*(.*)$/i, "无法删除这些箭：$1"],
   [/^Please enter both your Supabase URL and Anon Key\.$/i, "请把 Supabase URL 和 Anon Key 都填上。"],
   [/^No shot is currently being reviewed\.$/i, "当前没有正在复盘的箭。"],
+
+  // ---- 动态数字/时间格式（交互流程里出现的）----
+  [/^([\d.]+)s of ([\d.]+)s$/i, "$1s / $2s"],
+  [/^(\d+) - arrow (\d+)$/i, "$1 分 - 第 $2 支箭"],
+  [/^Sample shot:\s*(\d+)$/i, (m) => `示例箭：${m[1]}`],
+  [/^Select (.+?), (\d{4}\/\d{1,2}\/\d{1,2} \d{1,2}:\d{2}:\d{2})$/,
+    (m) => `选择 ${lookup(m[1]) || m[1]}，${m[2]}`],
+  [/^Unexpected acceleration \(([\d.]+) g\)\. Hold the bow still — only gravity should be acting on it — and retry\.$/,
+    (m) => `加速度异常（${m[1]} g）。请稳住弓 —— 此时只应有重力作用 —— 然后重试。`],
+  [/^Detected "(.+?)" \((.+?)\)\. Press Apply to use it\.$/,
+    (m) => `识别为「${lookup(m[1]) || m[1]}」（${m[2]}）。点「应用」即可使用。`],
+  [/^Detected a custom mapping \((.+?)\)\. Press Apply to use it.*$/,
+    (m) => `识别到自定义映射（${m[1]}）。点「应用」即可使用；预览里的小板可能不会准确匹配自定义映射。`],
 ];
 
 const textOriginals = new WeakMap(); // Text -> { orig, out }
@@ -162,6 +187,7 @@ function applyText(node) {
   const out = lookup(source);
   if (out == null) {
     if (rec) textOriginals.delete(node);
+    recordMissing(source);
     return;
   }
 
@@ -198,6 +224,7 @@ function applyAttributes(el) {
     const out = lookup(source);
     if (out == null || current === out) {
       if (rec) map.delete(attr);
+      if (out == null) recordMissing(source);
       continue;
     }
     if (!rec) map.set(attr, { orig: source, out });
@@ -352,6 +379,7 @@ window.ofI18n = {
   setLang,
   getLang,
   dict,
+  missing: () => [...missingStrings],
 };
 
 /* 原生 confirm/alert/prompt 不在 DOM 里，单独包一层，让它们走同一张字典 */
