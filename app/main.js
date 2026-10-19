@@ -3,9 +3,15 @@
 
 import { createStore, EventBus } from "./core/store.js?v=shot-store-180";
 import { watchSavedData } from "./core/saved-data.js?v=shot-store-174";
-import { TelemetryStore } from "./telemetry/telemetry.js?v=shot-store-200";
+import { TelemetryStore } from "./telemetry/telemetry.js?v=shot-store-202";
 import { createAdapter } from "./device/adapters.js?v=shot-store-200";
 import { mountDashboard, mountLog } from "./ui/dashboard.js?v=shot-store-163";
+import {
+  isLowThreshold,
+  normalizeReleaseMode,
+  releaseModeForThreshold,
+  thresholdForReleaseMode,
+} from "./telemetry/release-mode.js?v=shot-store-202";
 import { createReplayController, traceTimeline } from "./ui/replay.js?v=shot-store-155";
 import { tracePhases } from "./ui/trace-phases.js?v=shot-store-155";
 import {
@@ -22,12 +28,12 @@ import { CloudSyncAdapter } from "./telemetry/sync.js?v=shot-store-176";
 import { mountTraining } from "./ui/training.js?v=shot-store-200";
 import { mountGuide } from "./ui/guide.js?v=shot-store-161";
 import { initDataBackup } from "./ui/data-backup.js?v=shot-store-176";
-import { initHistory } from "./ui/history.js?v=shot-store-183";
+import { initHistory } from "./ui/history.js?v=shot-store-202";
 import { mountBowProfiles } from "./ui/bow-profiles.js?v=shot-store-176";
 import { mountBrowserSupport } from "./ui/browser-support.js?v=shot-store-178";
 import { generateSampleData, SAMPLE_DEVICE_ID } from "./data/sample-data.js?v=shot-store-137";
 
-const APP_BUILD = "shot-store-200";
+const APP_BUILD = "shot-store-202";
 const MODEL_ATTITUDE_VERSION = 3;
 
 const ELEMENT_IDS = [
@@ -47,7 +53,7 @@ const ELEMENT_IDS = [
   "navDashboardBtn", "navTrainingBtn", "navHistoryBtn", "navBowShopBtn", "navSettingsBtn", "navGuideBtn",
   "tabDashboard", "tabTraining", "tabHistory", "tabBowShop", "tabSettings", "tabGuide",
   "guideSidebar", "guideContent", "historyList",
-  "historyBulkActions", "bulkSelectCount", "bulkExportBtn", "bulkDeleteBtn", "bulkCancelBtn", "historySelectModeBtn", "bulkSelectAllBtn", "historyDefaultActions", "historyExportStatus",
+  "historyBulkActions", "bulkSelectCount", "bulkExportBtn", "bulkDeleteBtn", "bulkCancelBtn", "historySelectModeBtn", "bulkSelectAllBtn", "historyDefaultActions", "historyExportStatus", "historyHideTrainerToggle",
   "trainingDrillSelect", "trainingDrillDescription", "trainingDurationSelect", "startTrainingBtn", "cancelTrainingBtn",
   "adaptiveCoachTitle", "adaptiveCoachText", "adaptiveCoachStats", "trainingReadyTitle", "trainingReadyText",
   "trainingStatusText", "trainingStatusDesc", "trainingDisplayDefault", "trainingDisplayActive",
@@ -58,6 +64,7 @@ const ELEMENT_IDS = [
   "recordToggleBtn", "recordToggleLabel", "recordStatusItem",
   "recordTimeText", "recordSamplesText", "recordMessage", "discardRecordBtn",
   "thresholdSlider", "thresholdValue",
+  "releaseModeBowBtn", "releaseModeTrainerBtn", "releaseModeWarning",
   "wakeSlider", "wakeValue",
   "sleepTimeoutSlider", "sleepTimeoutValue",
   "sleepSensSlider", "sleepSensValue", "sleepEnableToggle",
@@ -164,6 +171,10 @@ const store = createStore({
   uploadPending: 0,
   wakeSensitivity: 2.0,
   threshold: cached.threshold !== undefined ? Number(cached.threshold) : 12.0,
+  releaseMode: cached.releaseMode !== undefined
+    ? normalizeReleaseMode(cached.releaseMode)
+    : releaseModeForThreshold(cached.threshold !== undefined ? Number(cached.threshold) : 12.0),
+  hideTrainerCaptures: !!cached.hideTrainer,
   sample: null,
   syncStatus: "local",
   syncText: "Local-Only",
@@ -244,6 +255,8 @@ function saveSettingsToCache() {
   try {
     const settings = {
       threshold: el.thresholdSlider.value,
+      releaseMode: store.get().releaseMode,
+      hideTrainer: !!store.get().hideTrainerCaptures,
       wake: el.wakeSlider.value,
       sleepTimeout: el.sleepTimeoutSlider.value,
       sleepSens: el.sleepSensSlider.value,
@@ -343,6 +356,10 @@ function initSettingsFromCache() {
       el.liveDurationSlider.value = cached.liveTraceDuration;
       el.liveDurationValue.textContent = cached.liveTraceDuration;
     }
+    if (cached.hideTrainer !== undefined && el.historyHideTrainerToggle) {
+      el.historyHideTrainerToggle.checked = !!cached.hideTrainer;
+    }
+    syncReleaseModeUi();
   } catch (err) {
     console.error("Failed to init settings from cache:", err);
   }
@@ -882,10 +899,56 @@ if (el.liveDurationSlider) {
   });
 }
 
+function releaseModeButtons() {
+  return [el.releaseModeBowBtn, el.releaseModeTrainerBtn].filter(Boolean);
+}
+
+// Keep the preset buttons and the low-threshold warning in sync with whatever
+// the slider currently holds: dragging it by hand is a valid custom setting,
+// and anything below the low threshold is treated as a trainer capture.
+function syncReleaseModeUi() {
+  const mode = normalizeReleaseMode(store.get().releaseMode);
+  const threshold = Number(store.get().threshold);
+  for (const button of releaseModeButtons()) {
+    // A preset only looks selected while the slider still holds its value, so a
+    // manually dragged threshold never masquerades as "Bow · 12 g".
+    const active = button.dataset.releaseMode === mode
+      && threshold === thresholdForReleaseMode(button.dataset.releaseMode);
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+  el.releaseModeWarning?.classList.toggle("hidden", !isLowThreshold(store.get().threshold));
+}
+
+function applyReleaseMode(mode) {
+  const next = normalizeReleaseMode(mode);
+  const grams = thresholdForReleaseMode(next);
+  el.thresholdSlider.value = String(grams);
+  el.thresholdValue.textContent = grams.toFixed(1);
+  store.set({ threshold: grams, releaseMode: next });
+  if (adapter) adapter.sendControl(`thresh:${grams.toFixed(1)}`);
+  else bus.emit("log", "Connect over BLE to apply the shot threshold.");
+  syncReleaseModeUi();
+  saveSettingsToCache();
+}
+
+for (const button of releaseModeButtons()) {
+  button.addEventListener("click", () => applyReleaseMode(button.dataset.releaseMode));
+}
+
+if (el.historyHideTrainerToggle) {
+  el.historyHideTrainerToggle.addEventListener("change", () => {
+    store.set({ hideTrainerCaptures: !!el.historyHideTrainerToggle.checked });
+    saveSettingsToCache();
+    bus.emit("trainer-filter-changed", store.get().hideTrainerCaptures);
+  });
+}
+
 el.thresholdSlider.addEventListener("input", () => {
   const val = thresholdGrams();
   el.thresholdValue.textContent = val.toFixed(1);
-  store.set({ threshold: val });
+  store.set({ threshold: val, releaseMode: releaseModeForThreshold(val) });
+  syncReleaseModeUi();
 });
 el.thresholdSlider.addEventListener("change", () => {
   const command = `thresh:${thresholdGrams().toFixed(1)}`;

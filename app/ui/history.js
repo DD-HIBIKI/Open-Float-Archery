@@ -2,7 +2,8 @@
 
 import { getAll, get, readSavedReview, removeSavedShots, saveShotOutcome, saveSessionOverride, exportShotData, exportSelectedShots, groupShotsByTime, sessionOverrideForGroup, SESSION_GAP_MS } from "../core/db.js?v=shot-store-176";
 import { downloadJson, exportFileStamp } from "./download.js?v=shot-store-176";
-import { coachForScore } from "../telemetry/telemetry.js?v=shot-store-183";
+import { coachForScore } from "../telemetry/telemetry.js?v=shot-store-202";
+import { isTrainerCapture } from "../telemetry/release-mode.js?v=shot-store-202";
 import { scoreValue, shotFloatScore, averageShotScore } from "../telemetry/score.js?v=shot-store-150";
 import {
   buildScorecard,
@@ -28,6 +29,21 @@ import { mountImpactTarget } from "./impact-target.js?v=shot-store-138";
 import { tracePhases } from "./trace-phases.js?v=shot-store-155";
 
 export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab, download = downloadJson }) {
+  // Shots captured with the low-threshold trainer preset are real captures but
+  // not real arrows, so the saved-shot views can hide them on demand.
+  function trainerCapturesHidden() {
+    return !!el.historyHideTrainerToggle?.checked;
+  }
+
+  function filterTrainerCaptures(shots) {
+    if (!Array.isArray(shots) || !trainerCapturesHidden()) return shots;
+    return shots.filter((shot) => !isTrainerCapture(shot));
+  }
+
+  function trainerChipHtml(shot) {
+    return isTrainerCapture(shot) ? ' <span class="trainer-chip">Trainer</span>' : "";
+  }
+
   // Escape user-entered text before injecting into innerHTML.
   function escapeHtml(str) {
     return String(str == null ? "" : str)
@@ -378,10 +394,11 @@ export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab,
       el.historyList.innerHTML = `<p class="note" style="padding: 24px; text-align: center;">Loading saved history...</p>`;
     }
     try {
-      const [shots, bows, overrides] = await Promise.all([
+      const [allShots, bows, overrides] = await Promise.all([
         getAll("shots"), getAll("bow_profiles"), getAll("session_overrides"),
       ]);
       if (request !== historyRequest) return;
+      const shots = filterTrainerCaptures(allShots);
       // Capture interaction state immediately before replacing the rows, so
       // edits or focus changes made while the reads were pending also survive.
       const focused = document.activeElement;
@@ -1128,7 +1145,7 @@ export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab,
       <div class="history-item-body">
         <div class="history-meta">
           <button type="button" class="history-title history-review-btn" aria-label="Review ${escapeHtml(title)}, ${escapeHtml(timestampStr)}">${escapeHtml(title)}</button>
-          <div class="history-subtitle">${escapeHtml(timestampStr)}</div>
+          <div class="history-subtitle">${escapeHtml(timestampStr)}${trainerChipHtml(shot)}</div>
         </div>
         <div class="history-metrics">
           ${arrowMetric}
@@ -1316,7 +1333,7 @@ export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab,
         <canvas class="recent-shot-preview"></canvas>
       </span>
       <span class="recent-shot-header">
-        <span class="recent-shot-title">${escapeHtml(title)}</span>
+        <span class="recent-shot-title">${escapeHtml(title)}${trainerChipHtml(shot)}</span>
         <span class="recent-shot-time">${escapeHtml(timeStr)}</span>
       </span>
       <span class="recent-shot-metrics">
@@ -1372,7 +1389,8 @@ export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab,
     if (!el.recentShotsList) return;
     const request = ++recentRequest;
     try {
-      const shots = await getAll("shots");
+      const allShots = await getAll("shots");
+      const shots = filterTrainerCaptures(allShots);
       if (request !== recentRequest) return;
       if (!shots || shots.length === 0) {
         el.recentShotsList.innerHTML = `<p class="note" style="padding: 12px; text-align: center; width: 100%;">No shots captured in this session yet.</p>`;
@@ -1476,6 +1494,10 @@ export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab,
 
   bus.on("shot-saved", refreshCaptureViews);
   bus.on("shot-trace-saved", refreshCaptureViews);
+  bus.on("trainer-filter-changed", () => {
+    loadShotHistoryList();
+    loadRecentShotsList();
+  });
 
   // Keep selection independent of DOM rows, which refresh after saved captures.
   function updateShotSelection(checkbox) {

@@ -4707,3 +4707,108 @@ canvas,
   50% { transform: translateY(-8px); }
   100% { transform: translateY(0px); }
 }
+
+/* ---- Release mode presets (Settings > Telemetry & Buffer) ---- */
+.release-mode-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.release-mode-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.release-mode-presets {
+  display: inline-flex;
+  gap: 4px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.release-mode-btn {
+  min-height: 26px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.release-mode-btn:hover {
+  color: var(--text);
+}
+
+.release-mode-btn.active {
+  border-color: rgba(53, 199, 232, 0.5);
+  background: rgba(53, 199, 232, 0.16);
+  color: var(--cyan);
+}
+
+.release-mode-warning {
+  color: var(--amber);
+}
+
+/* Marks captures taken with the low-threshold trainer preset. */
+.trainer-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid rgba(243, 191, 76, 0.55);
+  border-radius: 999px;
+  background: rgba(243, 191, 76, 0.12);
+  color: var(--amber);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* ---- History: hide trainer captures ---- */
+#historyDefaultActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.history-filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.history-filter-toggle:hover {
+  color: var(--text);
+}
+
+.history-filter-toggle input {
+  margin: 0;
+  accent-color: var(--cyan);
+}

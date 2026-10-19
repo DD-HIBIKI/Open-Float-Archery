@@ -17,6 +17,10 @@ import {
   FLOAT_SCORE_VERSION,
   scoreValue,
 } from "./score.js?v=shot-store-150";
+import {
+  normalizeReleaseMode,
+  releaseModeForThreshold,
+} from "./release-mode.js?v=shot-store-202";
 
 export const MAX_TRACE_POINTS = 1000;
 
@@ -125,6 +129,21 @@ function configuredBrowserShotTraceRateHz() {
     }
   } catch (_) {}
   return BROWSER_SHOT_TRACE_RATES[1];
+}
+
+// Stamped onto every shot so low-threshold trainer captures can be filtered
+// out of the saved-arrow views later. The firmware only knows the threshold,
+// so a legacy cache without a mode still maps to trainer when it is low.
+function configuredReleaseMode() {
+  try {
+    const settings = JSON.parse(localStorage.getItem("openfloat_settings") || "{}");
+    if (settings.releaseMode !== undefined) {
+      return normalizeReleaseMode(settings.releaseMode);
+    }
+    const threshold = Number(settings.threshold);
+    if (Number.isFinite(threshold)) return releaseModeForThreshold(threshold);
+  } catch (_) {}
+  return "bow";
 }
 
 function accelTiltDeg(ax, ay, az) {
@@ -679,6 +698,7 @@ export class TelemetryStore {
         session_id: null,
         device_id: deviceId,
         capture_kind: "arrow",
+        release_mode: configuredReleaseMode(),
         device_shot_id: shot.shotId,
         stored_upload: !!shot.stored,
         timestamp: capturedAt,

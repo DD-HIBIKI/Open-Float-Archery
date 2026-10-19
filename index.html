@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OpenFloat Shot Trainer</title>
-  <link rel="stylesheet" href="styles.css?v=shot-store-178">
+  <link rel="stylesheet" href="styles.css?v=shot-store-202">
   <link rel="stylesheet" href="theme-graph-paper.css?v=proto-2" id="graphThemeLink">
   <meta name="theme-color" content="#061014" id="themeMetaColor">
   <script>
@@ -193,7 +193,7 @@
                     <span id="hzValue">0</span> Hz
                   </span>
                   <span class="metric-divider">/</span>
-                  <span class="inline-metric-item" title="Shots detected during active session">
+                  <span class="inline-metric-item" title="Lifetime shot count reported by the device — not the number of saved records.">
                     <strong>Shots:</strong> <span id="shotCountValue">0</span>
                   </span>
                   <span class="metric-divider">/</span>
@@ -470,6 +470,10 @@
                 <button id="bulkCancelBtn" class="secondary mini-btn" type="button">Cancel</button>
               </div>
               <div id="historyDefaultActions">
+                <label class="history-filter-toggle" title="Hide shots captured with the low-threshold trainer preset">
+                  <input type="checkbox" id="historyHideTrainerToggle">
+                  Hide trainer captures
+                </label>
                 <button id="historySelectModeBtn" class="secondary mini-btn" type="button">Select Shots</button>
               </div>
               <p id="historyExportStatus" class="note history-export-status" role="status"></p>
@@ -553,6 +557,14 @@
                 <label for="thresholdSlider">Release Threshold - <span id="thresholdValue">12.0</span> g</label>
                 <input type="range" id="thresholdSlider" min="2" max="30" step="0.5" value="12">
                 <p class="note">Impulse threshold for bow release detection, set in BLE firmware.</p>
+                <div class="release-mode-row">
+                  <span class="release-mode-label">Release mode</span>
+                  <div class="release-mode-presets" role="group" aria-label="Release mode presets">
+                    <button type="button" class="release-mode-btn" id="releaseModeBowBtn" data-release-mode="bow" aria-pressed="true">Bow · 12 g</button>
+                    <button type="button" class="release-mode-btn" id="releaseModeTrainerBtn" data-release-mode="trainer" aria-pressed="false">Trainer · 2 g</button>
+                  </div>
+                </div>
+                <p class="note release-mode-warning hidden" id="releaseModeWarning">Low threshold: handling the device, bumping the bow, or dry-firing a release trainer can all register as shots.</p>
               </div>
               <div class="field">
                 <label for="followThroughSlider">Follow-Through - <span id="followThroughValueMs">1.5</span> s</label>
@@ -927,7 +939,7 @@
     })();
   </script>
 
-  <script type="module" src="app/i18n.js?v=zh-3"></script>
-  <script type="module" src="app/main.js?v=shot-store-201"></script>
+  <script type="module" src="app/i18n.js?v=zh-5"></script>
+  <script type="module" src="app/main.js?v=shot-store-202"></script>
 </body>
 </html>
