@@ -1,4 +1,4 @@
-const CACHE_NAME = "openfloat-v201";
+const CACHE_NAME = "openfloat-v202";
 const ASSETS = [
   "./",
   "./index.html",
@@ -35,6 +35,7 @@ const ASSETS = [
   "./app/ui/bow-profiles.js",
   "./app/ui/browser-support.js",
   "./app/ui/bow-3d.js",
+  "./app/ui/bow-model-recurve.js",
   "./app/ui/trace-chart.js",
   "./app/ui/trace-phases.js",
   "./app/ui/replay.js",

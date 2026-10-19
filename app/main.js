@@ -16,7 +16,7 @@ import {
   mountOrientationSettings,
   mountOrientationState,
   rotateMountAxes,
-} from "./ui/bow-3d.js?v=shot-store-155";
+} from "./ui/bow-3d.js?v=shot-store-156";
 import { initDb, getAll, put, removeSavedShots } from "./core/db.js?v=shot-store-176";
 import { CloudSyncAdapter } from "./telemetry/sync.js?v=shot-store-176";
 import { mountTraining } from "./ui/training.js?v=shot-store-200";
@@ -70,6 +70,7 @@ const ELEMENT_IDS = [
   "zeroBtn", "zeroYawBtn", "batteryBadge", "batteryText",
   "calOffsetRollValue", "calOffsetPitchValue", "calOffsetYawValue",
   "mountOrientationSelect", "mountOrientationCanvas", "mountOrientationDescription",
+    "bowTypeSelect",
   "mountLiveCantValue", "mountLivePitchValue",
   "mountWizardText", "mountWizardPrimaryBtn", "mountWizardCancelBtn",
   "mountViewRollSlider", "mountViewRollValue",
@@ -214,6 +215,7 @@ const store = createStore({
   pitchOffset: cached.pitchOffset !== undefined ? Number(cached.pitchOffset) : 0.0,
   yawOffset: cached.yawOffset !== undefined ? Number(cached.yawOffset) : 0.0,
   mountOrientation: cachedMountOrientation,
+  bowType: cached.bowType === "recurve" ? "recurve" : "compound",
   mountBaseOrientation: cachedMountBase,
   mountAxes: cachedMountOrientation === "custom" ? cachedMountAxes : cloneMountAxes(mountOrientationById(cachedMountOrientation).axes),
   mountRotation: cachedMountOrientation === "custom" ? cachedMountRotation : [...mountOrientationById(cachedMountOrientation).rotation],
@@ -257,6 +259,7 @@ function saveSettingsToCache() {
       pitchOffset: store.get().pitchOffset,
       yawOffset: store.get().yawOffset,
       mountOrientation: store.get().mountOrientation,
+      bowType: store.get().bowType,
       mountBaseOrientation: store.get().mountBaseOrientation,
       mountAxes: store.get().mountAxes,
       mountRotation: store.get().mountRotation,
@@ -1214,6 +1217,14 @@ function wizardApply() {
   }
   saveSettingsToCache();
   wizardReset("Applied. Rebuild the firmware with this mapping so device-computed angles match. You can re-run guided setup any time.");
+}
+
+if (el.bowTypeSelect) {
+  el.bowTypeSelect.value = store.get().bowType === "recurve" ? "recurve" : "compound";
+  el.bowTypeSelect.addEventListener("change", () => {
+    store.set({ bowType: el.bowTypeSelect.value === "recurve" ? "recurve" : "compound" });
+    saveSettingsToCache();
+  });
 }
 
 if (el.mountWizardPrimaryBtn) {

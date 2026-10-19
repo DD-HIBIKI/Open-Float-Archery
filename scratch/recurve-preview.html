@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Olympic recurve bow — model preview</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --ink: #e6f4ef;
+    --dim: #7fb3bf;
+    --card: rgba(6, 20, 26, 0.82);
+    --edge: rgba(53, 199, 232, 0.35);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: #061014;
+    color: var(--ink);
+    font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+  }
+  canvas { display: block; }
+  #hud {
+    position: fixed;
+    top: 14px;
+    left: 14px;
+    padding: 12px 14px;
+    background: var(--card);
+    border: 1px solid var(--edge);
+    border-radius: 10px;
+    backdrop-filter: blur(6px);
+    max-width: 330px;
+    pointer-events: none;
+  }
+  #hud h1 {
+    margin: 0 0 6px;
+    font-size: 14px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #8fe6ff;
+  }
+  #hud dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; }
+  #hud dt { color: var(--dim); }
+  #hud dd { margin: 0; font-variant-numeric: tabular-nums; }
+  #hud .hint { margin-top: 8px; color: var(--dim); font-size: 11px; }
+  #views {
+    position: fixed;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 8px;
+    padding: 8px;
+    background: var(--card);
+    border: 1px solid var(--edge);
+    border-radius: 999px;
+  }
+  #views button {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--ink);
+    font: inherit;
+    padding: 6px 14px;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  #views button:hover { border-color: var(--edge); }
+  #views button[aria-pressed="true"] { background: rgba(53, 199, 232, 0.18); border-color: var(--edge); }
+  #legend {
+    position: fixed;
+    bottom: 16px;
+    left: 16px;
+    padding: 8px 12px;
+    background: var(--card);
+    border: 1px solid var(--edge);
+    border-radius: 10px;
+    color: var(--dim);
+    font-size: 11px;
+  }
+  #legend b { color: var(--ink); font-weight: 600; }
+</style>
+<script>
+  // Collected by the screenshot harness: any page error shows up here.
+  window.__errors = [];
+  window.__ready = false;
+  window.addEventListener("error", (event) => {
+    window.__errors.push(String((event && event.message) || event));
+  });
+  window.addEventListener("unhandledrejection", (event) => {
+    window.__errors.push("unhandledrejection: " + String(event.reason));
+  });
+  window.onerror = function (message, source, line, column) {
+    window.__errors.push(message + " @" + source + ":" + line + ":" + column);
+  };
+</script>
+</head>
+<body>
+<div id="hud">
+  <h1>Olympic recurve — procedural</h1>
+  <dl>
+    <dt>view</dt><dd id="hud-view">—</dd>
+    <dt>size</dt><dd id="hud-size">—</dd>
+    <dt>min</dt><dd id="hud-min">—</dd>
+    <dt>max</dt><dd id="hud-max">—</dd>
+  </dl>
+  <div class="hint">axes: +Y up · +X toward archer (string) · −X toward target (sight)</div>
+</div>
+<div id="legend">
+  <b>Riser</b> · Top_Limb · Bottom_Limb · <b>String</b> · <b>Sight</b> · Stabilizer · <b>Grip</b>
+</div>
+<div id="views">
+  <button data-view="front" type="button">Front (+X→−X)</button>
+  <button data-view="side" type="button">Side (+Z)</button>
+  <button data-view="sideBack" type="button">Side (−Z)</button>
+  <button data-view="iso" type="button">Iso</button>
+  <button data-view="detail" type="button">Detail</button>
+</div>
+<script type="module">
+import * as THREE from "../vendor/three/build/three.module.min.js";
+import { OrbitControls } from "../vendor/three/examples/jsm/controls/OrbitControls.js";
+import { buildRecurveBowModel } from "../app/ui/bow-model-recurve.js";
+
+const VIEWS = {
+  // Camera on +X looking toward -X: the archer's view of the bow.
+  front: { position: [22, 0.15, 0], target: [0, 0, 0], label: "front (+X → −X)" },
+  // Camera on +Z looking toward -Z: classic side silhouette, string right.
+  side: { position: [0, 0.15, 22], target: [0, 0, 0], label: "side (+Z)" },
+  // Camera on -Z looking toward +Z: mirror side, sights closer to camera.
+  sideBack: { position: [0, 0.15, -22], target: [0, 0, 0], label: "side (−Z)" },
+  iso: { position: [13.5, 7.5, 15], target: [0, 0, 0], label: "iso" },
+  // Close-up on the sight window, grip, arrow rest and sight mount.
+  detail: { position: [4.4, 1.6, 4.6], target: [-0.15, 0.45, 0], label: "detail (window)" },
+};
+
+const params = new URLSearchParams(window.location.search);
+const initialView = VIEWS[params.get("view")] ? params.get("view") : "side";
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x061014);
+
+const camera = new THREE.PerspectiveCamera(32, window.innerWidth / window.innerHeight, 0.1, 200);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.09;
+controls.minDistance = 5;
+controls.maxDistance = 60;
+controls.enablePan = true;
+
+// Lighting: cool ambient plus a warm key and a cyan rim, matching the app.
+scene.add(new THREE.AmbientLight(0xbfe6f2, 0.55));
+scene.add(new THREE.HemisphereLight(0xcfefff, 0x0a1a20, 0.75));
+
+const keyLight = new THREE.DirectionalLight(0xffffff, 2.3);
+keyLight.position.set(9, 13, 11);
+keyLight.castShadow = true;
+keyLight.shadow.mapSize.set(2048, 2048);
+keyLight.shadow.camera.left = -9;
+keyLight.shadow.camera.right = 9;
+keyLight.shadow.camera.top = 9;
+keyLight.shadow.camera.bottom = -9;
+keyLight.shadow.camera.near = 1;
+keyLight.shadow.camera.far = 50;
+keyLight.shadow.bias = -0.0006;
+scene.add(keyLight);
+
+const fillLight = new THREE.DirectionalLight(0x35c7e8, 0.8);
+fillLight.position.set(-11, 5, -7);
+scene.add(fillLight);
+
+const rimLight = new THREE.DirectionalLight(0xffbe5c, 0.45);
+rimLight.position.set(2, -8, -12);
+scene.add(rimLight);
+
+// Ground grid plus a dark plane so the bow casts a readable shadow.
+const grid = new THREE.GridHelper(34, 34, 0x2f7282, 0x16313a);
+grid.position.y = -6.05;
+scene.add(grid);
+
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(60, 60),
+  new THREE.MeshStandardMaterial({ color: 0x0a1c22, roughness: 0.95, metalness: 0.0 }),
+);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -6.07;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const bow = buildRecurveBowModel(THREE);
+scene.add(bow);
+
+// Measure the assembled model and surface it for the screenshot harness.
+bow.updateMatrixWorld(true);
+const bounds = new THREE.Box3().setFromObject(bow);
+const size = bounds.getSize(new THREE.Vector3());
+const min = bounds.min.clone();
+const max = bounds.max.clone();
+const format = (value) => (Math.round(value * 100) / 100).toFixed(2);
+window.__bbox = {
+  min: [Number(format(min.x)), Number(format(min.y)), Number(format(min.z))],
+  max: [Number(format(max.x)), Number(format(max.y)), Number(format(max.z))],
+  size: [Number(format(size.x)), Number(format(size.y)), Number(format(size.z))],
+};
+window.__parts = [];
+bow.traverse((node) => {
+  if (node.isMesh && node.name) window.__parts.push(node.name);
+});
+console.log(
+  "[recurve-preview] bbox",
+  JSON.stringify(window.__bbox),
+  "parts",
+  [...new Set(window.__parts)].join(","),
+);
+
+document.getElementById("hud-size").textContent =
+  `${format(size.x)} × ${format(size.y)} × ${format(size.z)}`;
+document.getElementById("hud-min").textContent =
+  `[${format(min.x)}, ${format(min.y)}, ${format(min.z)}]`;
+document.getElementById("hud-max").textContent =
+  `[${format(max.x)}, ${format(max.y)}, ${format(max.z)}]`;
+
+let currentView = initialView;
+
+function setView(name) {
+  const view = VIEWS[name] || VIEWS.side;
+  currentView = VIEWS[name] ? name : "side";
+  camera.position.set(...view.position);
+  controls.target.set(...view.target);
+  controls.update();
+  document.getElementById("hud-view").textContent = view.label;
+  for (const button of document.querySelectorAll("#views button")) {
+    button.setAttribute("aria-pressed", String(button.dataset.view === currentView));
+  }
+  window.__view = currentView;
+}
+
+for (const button of document.querySelectorAll("#views button")) {
+  button.addEventListener("click", () => setView(button.dataset.view));
+}
+
+window.addEventListener("keydown", (event) => {
+  const key = event.key.toLowerCase();
+  if (key === "1") setView("front");
+  if (key === "2") setView("side");
+  if (key === "3") setView("sideBack");
+  if (key === "4") setView("iso");
+});
+
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+setView(initialView);
+
+let frames = 0;
+renderer.setAnimationLoop(() => {
+  controls.update();
+  renderer.render(scene, camera);
+  frames += 1;
+  if (frames === 2 && !window.__ready) {
+    window.__ready = true;
+  }
+});
+
+window.__setView = setView;
+window.__THREE = THREE;
+window.__scene = scene;
+window.__bow = bow;
+window.__camera = camera;
+window.__controls = controls;
+window.__renderer = renderer;
+window.__keyLight = keyLight;
+</script>
+</body>
+</html>

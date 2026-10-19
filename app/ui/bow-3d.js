@@ -9,6 +9,7 @@ const GLTF_LOADER_URL = "../../vendor/three/examples/jsm/loaders/GLTFLoader.js";
 const ORBIT_CONTROLS_URL = "../../vendor/three/examples/jsm/controls/OrbitControls.js";
 const BOW_MODEL_URL = "Blender/BowModel.glb";
 const BOW_MODEL_TARGET_SIZE = 3.35;
+const RECURVE_MODEL_TARGET_SIZE = 3.05;
 const MCU_MODEL_NAMES = [
   "MCU",
   "MCU_XIAO",
@@ -29,6 +30,29 @@ const BOW_COMPOUND_PART_NAMES = [
   "Riser",
   "Top_Text",
 ];
+
+// Recurve model parts. Material customization matches on these names too, so
+// both bow types expose their own color controls.
+const BOW_RECURVE_PART_NAMES = [
+  "String",
+  "Riser",
+  "Top_Limb",
+  "Bottom_Limb",
+  "Sight",
+  "Stabilizer",
+  "Grip",
+];
+
+const BOW_TYPE_COMPOUND = "compound";
+const BOW_TYPE_RECURVE = "recurve";
+// Every bow group handed out by loadBowModel, so a bow-type change can swap the
+// model in all three scenes at once.
+const liveBowGroups = new Set();
+const bowTypeWatchers = new WeakSet();
+
+export function normalizeBowType(value) {
+  return value === BOW_TYPE_RECURVE ? BOW_TYPE_RECURVE : BOW_TYPE_COMPOUND;
+}
 
 export const MOUNT_ORIENTATIONS = [
   {
@@ -451,7 +475,7 @@ function captureBaseMaterialColor(material) {
 }
 
 function isBowCompoundMesh(mesh) {
-  const partNames = new Set(BOW_COMPOUND_PART_NAMES);
+  const partNames = new Set([...BOW_COMPOUND_PART_NAMES, ...BOW_RECURVE_PART_NAMES]);
   if (partNames.has(mesh.name)) return true;
   let node = mesh;
   while (node) {
@@ -720,7 +744,91 @@ function buildProceduralBowModel(THREE) {
   return bow;
 }
 
-async function loadBowModel(THREE) {
+async function buildRecurveBowGroup(THREE) {
+  // Loaded lazily: the app keeps working (on the compound model) even if this
+  // module is missing or fails to parse.
+  const { buildRecurveBowModel } = await import("./bow-model-recurve.js?v=bowtype-1");
+  const bow = new THREE.Group();
+  bow.rotation.order = "YZX";
+  const model = buildRecurveBowModel(THREE);
+
+  const box = new THREE.Box3().setFromObject(model);
+  const center = new THREE.Vector3();
+  box.getCenter(center);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  // The builder is authored with the grip at the origin; only recentre vertically.
+  model.position.y -= center.y;
+  const maxDimension = Math.max(size.x, size.y, size.z);
+  // Slightly smaller than the compound target: the recurve silhouette is taller
+  // and its limb tips otherwise touch the top of the preview camera frame.
+  model.scale.setScalar(maxDimension > 0 ? RECURVE_MODEL_TARGET_SIZE / maxDimension : 1);
+  model.traverse((child) => {
+    if (child.isMesh) child.frustumCulled = false;
+  });
+
+  bow.add(model);
+  bow.userData.modelRoot = model;
+  bow.userData.modelSource = "procedural-recurve";
+  bow.userData.modelPivotSource = "bounding-box";
+  bow.userData.bowType = BOW_TYPE_RECURVE;
+  attachXiaoModule(THREE, bow);
+  return bow;
+}
+
+async function swapBowModel(THREE, bow, bowType, state) {
+  const target = normalizeBowType(bowType);
+  if (bow.userData.bowType === target) return;
+
+  for (const child of [...bow.children]) {
+    bow.remove(child);
+    child.traverse?.((node) => {
+      if (node.isMesh && node.geometry) node.geometry.dispose();
+    });
+  }
+  bow.userData.modelRoot = null;
+  bow.userData.xiaoModule = null;
+
+  const replacement = await loadBowModel(THREE, target);
+  liveBowGroups.delete(replacement); // transient carrier only; children move to bow
+  for (const child of [...replacement.children]) bow.add(child);
+  bow.userData.modelRoot = replacement.userData.modelRoot;
+  bow.userData.xiaoModule = replacement.userData.xiaoModule;
+  bow.userData.bowType = target;
+  bow.userData.modelSource = replacement.userData.modelSource;
+  bow.userData.modelPivotSource = replacement.userData.modelPivotSource;
+
+  applyModelAlignment(bow.userData.modelRoot, state);
+  applyBowCustomization(bow.userData.modelRoot, state);
+  if (typeof bow.userData.onModelSwapped === "function") bow.userData.onModelSwapped();
+}
+
+function installBowTypeWatcher(THREE, store) {
+  if (bowTypeWatchers.has(store)) return;
+  bowTypeWatchers.add(store);
+  let last = normalizeBowType(store.get().bowType);
+  store.subscribe((state) => {
+    const next = normalizeBowType(state.bowType);
+    if (next === last) return;
+    last = next;
+    for (const bow of liveBowGroups) {
+      swapBowModel(THREE, bow, next, state).catch((error) => {
+        console.warn("Bow model swap failed:", error);
+      });
+    }
+  });
+}
+
+async function loadBowModel(THREE, bowType = BOW_TYPE_COMPOUND) {
+  if (normalizeBowType(bowType) === BOW_TYPE_RECURVE) {
+    try {
+      const bow = await buildRecurveBowGroup(THREE);
+      liveBowGroups.add(bow);
+      return bow;
+    } catch (error) {
+      console.warn("Recurve model unavailable; falling back to the compound model.", error);
+    }
+  }
   try {
     const { GLTFLoader } = await import(GLTF_LOADER_URL);
     const loader = new GLTFLoader();
@@ -763,11 +871,16 @@ async function loadBowModel(THREE) {
 
     bow.add(model);
     bow.userData.modelRoot = model;
+    bow.userData.bowType = BOW_TYPE_COMPOUND;
     attachXiaoModule(THREE, bow, mountPoint, mcuModel);
+    liveBowGroups.add(bow);
     return bow;
   } catch (error) {
     console.warn(`Unable to load ${BOW_MODEL_URL}; using procedural bow fallback.`, error);
-    return buildProceduralBowModel(THREE);
+    const bow = buildProceduralBowModel(THREE);
+    bow.userData.bowType = BOW_TYPE_COMPOUND;
+    liveBowGroups.add(bow);
+    return bow;
   }
 }
 
@@ -809,7 +922,8 @@ export async function initOrientationVisualizer(el, store) {
   guide.add(makeLine(THREE, [[0, 0, -1.2], [0, 0, 1.2]], 0xffbe5c, 0.42));
   scene.add(guide);
 
-  const bow = await loadBowModel(THREE);
+  const bow = await loadBowModel(THREE, store.get().bowType);
+  installBowTypeWatcher(THREE, store);
   scene.add(bow);
 
   function quaternionFromZyxEulerDeg(rollDeg, pitchDeg, yawDeg) {
@@ -1040,7 +1154,8 @@ export async function mountOrientationSettings({ store, el }) {
   });
   scene.add(guide);
 
-  const bow = await loadBowModel(THREE);
+  const bow = await loadBowModel(THREE, store.get().bowType);
+  installBowTypeWatcher(THREE, store);
   bow.rotation.y = radians(12);
   scene.add(bow);
   let viewRoll = 0;
@@ -1197,9 +1312,18 @@ export async function mountBowShop({ store, el, saveSettingsToCache = null }) {
   });
   scene.add(guide);
 
-  const bow = await loadBowModel(THREE);
+  const bow = await loadBowModel(THREE, store.get().bowType);
+  installBowTypeWatcher(THREE, store);
   bow.rotation.y = radians(12);
   scene.add(bow);
+  bow.userData.onModelSwapped = () => {
+    renderBowMaterialColorControls(
+      collectBowMaterials(bow.userData.modelRoot),
+      store,
+      el,
+      saveSettingsToCache,
+    );
+  };
   renderBowMaterialColorControls(
     collectBowMaterials(bow.userData.modelRoot),
     store,

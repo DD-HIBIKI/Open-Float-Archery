@@ -497,9 +497,18 @@
           </div>
 
           <div class="panel bow-shop-controls">
+            <h3>Bow Type</h3>
+            <div class="field" style="margin-bottom: 14px;">
+              <label for="bowTypeSelect">Bow type</label>
+              <select id="bowTypeSelect">
+                <option value="compound">Compound bow</option>
+                <option value="recurve">Recurve bow</option>
+              </select>
+              <p class="note">Switches the 3D model used by the dashboard, mount alignment and this preview.</p>
+            </div>
             <h3>Bow Materials</h3>
             <div id="bowMaterialColorList" class="bow-material-color-list" aria-label="Bow material colors"></div>
-            <p class="note">Uses named Blender materials from the compound bow model. Sights and electronics stay separate for future attachment controls.</p>
+            <p class="note">Materials are read from the loaded model with named parts, so colors apply to both bow types. Sights and electronics stay separate for future attachment controls.</p>
           </div>
         </section>
       </div>
@@ -919,6 +928,6 @@
   </script>
 
   <script type="module" src="app/i18n.js?v=zh-3"></script>
-  <script type="module" src="app/main.js?v=shot-store-200"></script>
+  <script type="module" src="app/main.js?v=shot-store-201"></script>
 </body>
 </html>
