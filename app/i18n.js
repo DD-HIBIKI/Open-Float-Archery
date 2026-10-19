@@ -80,6 +80,19 @@ const PATTERNS = [
   // 计分卡下拉里的 "3 arrows" / "2 ends"
   [/^(\d+)\s+arrows?$/i, "$1 箭"],
   [/^(\d+)\s+ends?$/i, "$1 组"],
+
+  // ---- 原生弹窗文案（confirm / alert / prompt）----
+  [/^Run zero calibration\?\s*This sets the bow level reference from the sensor's current cant and pitch\.\s*Only do this when the bow is level and still\.\s*Current reading: Cant\s*(-?[\d.]+)°,?\s*Pitch\s*(-?[\d.]+)°,?\s*Yaw\s*(-?[\d.]+)°\s*Your previous calibration will be replaced\.$/,
+    (m) => `要执行零点标定吗？\n\n这会把弓身当前的水平参考设为 cant 与俯仰的零点。只在弓竖直、静止不动时做这一步。\n\n当前读数：cant ${m[1]}°、俯仰 ${m[2]}°、航向 ${m[3]}°\n\n原有标定会被覆盖。`],
+  [/^Delete this saved capture from this browser\?\s*(.*?)\s*Cloud copies are unchanged\.\s*This cannot be undone\.$/,
+    (m) => `要从本浏览器删除这条已存箭吗？\n\n${m[1]}\n\n云端副本不变，且此操作无法撤销。`],
+  [/^Delete\s+(\d+)\s+selected captures? from this browser\?\s*Cloud copies are unchanged\.\s*This cannot be undone\.$/,
+    (m) => `要从本浏览器删除选中的 ${m[1]} 条已存箭吗？\n\n云端副本不变，且此操作无法撤销。`],
+  [/^Error fetching trace payload:\s*(.*)$/i, "读取轨迹数据出错：$1"],
+  [/^Could not delete capture:\s*(.*)$/i, "无法删除该箭：$1"],
+  [/^Could not delete captures:\s*(.*)$/i, "无法删除这些箭：$1"],
+  [/^Please enter both your Supabase URL and Anon Key\.$/i, "请把 Supabase URL 和 Anon Key 都填上。"],
+  [/^No shot is currently being reviewed\.$/i, "当前没有正在复盘的箭。"],
 ];
 
 const textOriginals = new WeakMap(); // Text -> { orig, out }
@@ -340,6 +353,23 @@ window.ofI18n = {
   getLang,
   dict,
 };
+
+/* 原生 confirm/alert/prompt 不在 DOM 里，单独包一层，让它们走同一张字典 */
+(function translateNativeDialogs() {
+  if (window.__ofNativeDialogsPatched) return;
+  window.__ofNativeDialogsPatched = true;
+  ["confirm", "alert", "prompt"].forEach((name) => {
+    const original = window[name];
+    if (typeof original !== "function") return;
+    window[name] = function (message, ...rest) {
+      if (lang === ZH && typeof message === "string") {
+        const translated = lookup(message);
+        if (translated) message = translated;
+      }
+      return original.call(window, message, ...rest);
+    };
+  });
+})();
 
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", init, { once: true });
