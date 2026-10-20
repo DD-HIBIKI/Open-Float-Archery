@@ -1,7 +1,7 @@
 // Pure training analysis and scoring helpers. Keeping this module free of DOM
 // and storage dependencies makes the coaching rules transparent and testable.
 
-import { scoreValue } from "../telemetry/score.js?v=shot-store-205";
+import { scoreValue } from "../telemetry/score.js?v=shot-store-206";
 
 export const TRAINING_DRILLS = Object.freeze({
   steady: Object.freeze({

@@ -6,7 +6,7 @@ import {
   summarizeImpactGroup,
   summarizeSessionOutcomes,
 } from "../telemetry/outcome.js?v=shot-store-150";
-import { scoreValue, shotFloatScore, averageShotScore, shotV3Score } from "../telemetry/score.js?v=shot-store-205";
+import { scoreValue, shotFloatScore, averageShotScore, shotV3Score } from "../telemetry/score.js?v=shot-store-206";
 
 function escapeHtml(value) {
   return String(value ?? "")

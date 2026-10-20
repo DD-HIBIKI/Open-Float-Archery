@@ -17,7 +17,7 @@ import {
   computeLiveFloatScore,
   FLOAT_SCORE_VERSION,
   scoreValue,
-} from "./score.js?v=shot-store-205";
+} from "./score.js?v=shot-store-206";
 import {
   normalizeReleaseMode,
   releaseModeForThreshold,
@@ -964,6 +964,10 @@ export class TelemetryStore {
         hold_mean_roll: v3.metrics.holdMeanRoll,
         mcr_ms: v3.metrics.mcrMs,
         mcr_label: v3.metrics.mcrLabel,
+        bow_tip_deg: v3.metrics.bowTipDeg,
+        bow_tip_ms: v3.metrics.bowTipMs,
+        bow_tip_mono: v3.metrics.bowTipMono,
+        bow_tip_rate: v3.metrics.bowTipRate,
       });
     } catch (error) {
       console.error("Delayed browser trace save failed:", error);

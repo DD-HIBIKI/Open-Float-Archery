@@ -2,9 +2,9 @@
 
 import { getAll, get, readSavedReview, removeSavedShots, saveShotOutcome, saveSessionOverride, exportShotData, exportSelectedShots, groupShotsByTime, sessionOverrideForGroup, SESSION_GAP_MS } from "../core/db.js?v=shot-store-176";
 import { downloadJson, exportFileStamp } from "./download.js?v=shot-store-176";
-import { coachForScore } from "../telemetry/telemetry.js?v=shot-store-205";
+import { coachForScore } from "../telemetry/telemetry.js?v=shot-store-206";
 import { isTrainerCapture } from "../telemetry/release-mode.js?v=shot-store-202";
-import { scoreValue, shotFloatScore, averageShotScore, shotV3Score } from "../telemetry/score.js?v=shot-store-205";
+import { scoreValue, shotFloatScore, averageShotScore, shotV3Score } from "../telemetry/score.js?v=shot-store-206";
 import {
   buildScorecard,
   canRecordArrowOutcome,
@@ -234,6 +234,11 @@ export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab,
     if (sway) parts.push(`sway ${sway}\u00b0`);
     if (drift) parts.push(`drift ${drift}\u00b0/s`);
     if (follow) parts.push(`follow ${follow}\u00b0`);
+    if (shot.bow_tip_deg != null) {
+      const tip = Number(shot.bow_tip_deg).toFixed(1);
+      const tipSec = shot.bow_tip_ms == null ? "" : `/${(Number(shot.bow_tip_ms) / 1000).toFixed(2)}s`;
+      parts.push(`tip ${tip}\u00b0${tipSec}`);
+    }
     if (shot.mcr_ms != null) parts.push(`MCRT ${Math.round(Number(shot.mcr_ms))} ms`);
     return parts.join(" \u00b7 ");
   }

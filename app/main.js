@@ -3,7 +3,7 @@
 
 import { createStore, EventBus } from "./core/store.js?v=shot-store-180";
 import { watchSavedData } from "./core/saved-data.js?v=shot-store-174";
-import { TelemetryStore } from "./telemetry/telemetry.js?v=shot-store-205";
+import { TelemetryStore } from "./telemetry/telemetry.js?v=shot-store-206";
 import { createAdapter } from "./device/adapters.js?v=shot-store-200";
 import { mountDashboard, mountLog } from "./ui/dashboard.js?v=shot-store-163";
 import {
@@ -24,17 +24,17 @@ import {
   rotateMountAxes,
 } from "./ui/bow-3d.js?v=shot-store-156";
 import { initDb, getAll, get, put, removeSavedShots } from "./core/db.js?v=shot-store-176";
-import { computeFloatScoreV3FromTrace } from "./telemetry/score.js?v=shot-store-205";
+import { computeFloatScoreV3FromTrace } from "./telemetry/score.js?v=shot-store-206";
 import { CloudSyncAdapter } from "./telemetry/sync.js?v=shot-store-176";
 import { mountTraining } from "./ui/training.js?v=shot-store-200";
 import { mountGuide } from "./ui/guide.js?v=shot-store-203";
 import { initDataBackup } from "./ui/data-backup.js?v=shot-store-176";
-import { initHistory } from "./ui/history.js?v=shot-store-205";
+import { initHistory } from "./ui/history.js?v=shot-store-206";
 import { mountBowProfiles } from "./ui/bow-profiles.js?v=shot-store-176";
 import { mountBrowserSupport } from "./ui/browser-support.js?v=shot-store-178";
 import { generateSampleData, SAMPLE_DEVICE_ID } from "./data/sample-data.js?v=shot-store-137";
 
-const APP_BUILD = "shot-store-205";
+const APP_BUILD = "shot-store-206";
 const MODEL_ATTITUDE_VERSION = 3;
 
 const ELEMENT_IDS = [
@@ -379,7 +379,9 @@ const SAMPLE_CLEARED_KEY = "openfloat_samples_cleared";
 async function backfillV3Metrics() {
   try {
     const shots = await getAll("shots");
-    const pending = shots.filter((shot) => shot && shot.v3_version == null);
+    // Recompute when v3 is missing, or when an older rollout stored v3 without
+    // the bow-tip diagnostics added later.
+    const pending = shots.filter((shot) => shot && (shot.v3_version == null || shot.bow_tip_deg === undefined));
     if (!pending.length) return;
     let updated = 0;
     for (const shot of pending) {
@@ -409,6 +411,10 @@ async function backfillV3Metrics() {
         hold_mean_roll: v3.metrics.holdMeanRoll,
         mcr_ms: v3.metrics.mcrMs,
         mcr_label: v3.metrics.mcrLabel,
+        bow_tip_deg: v3.metrics.bowTipDeg,
+        bow_tip_ms: v3.metrics.bowTipMs,
+        bow_tip_mono: v3.metrics.bowTipMono,
+        bow_tip_rate: v3.metrics.bowTipRate,
       });
       updated += 1;
     }

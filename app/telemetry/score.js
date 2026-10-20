@@ -362,6 +362,37 @@ export function v3Scale(value, scale) {
   return 100 * Math.pow(2, -Math.pow(value / scale, 2));
 }
 
+// Bow tip ("倒弓"): the forward pitch rotation the riser takes after the release.
+// This is a follow-through descriptor, not a score component yet - the trainer
+// tips strongly and there is no bow calibration for it, so it is reported as a
+// diagnostic (amplitude, time to 90%% of the tip, monotonic share, peak rate).
+function v3BowTip(points, t0) {
+  const window = v3Window(points, t0, [100000, 500000]);
+  if (window.length < 12) return null;
+  const first = window[0].pitch || 0;
+  const last = window[window.length - 1].pitch || 0;
+  const delta = last - first;
+  const direction = delta >= 0 ? 1 : -1;
+  let settled = null;
+  for (const point of window) {
+    const travelled = ((point.pitch || 0) - first) * direction;
+    if (Math.abs(delta) > 0.2 && travelled >= Math.abs(delta) * 0.9) { settled = point.tUs - t0 - 100000; break; }
+  }
+  const steps = [];
+  for (let index = 1; index < window.length; index += 1) {
+    const dt = (window[index].tUs - window[index - 1].tUs) / 1e6;
+    if (dt > 0) steps.push({ d: (window[index].pitch || 0) - (window[index - 1].pitch || 0), dt });
+  }
+  const monotonic = steps.filter((step) => step.d * direction >= -0.02).length;
+  const peakRate = steps.reduce((peak, step) => Math.max(peak, Math.abs(step.d) / step.dt), 0);
+  return {
+    bowTipDeg: Number(delta.toFixed(1)),
+    bowTipMs: settled == null ? null : Math.round(settled / 1000),
+    bowTipMono: steps.length ? Math.round((monotonic / steps.length) * 100) : null,
+    bowTipRate: Math.round(peakRate),
+  };
+}
+
 export function v3ScoreFromMetrics(metrics, mode = "bow") {
   const weights = V3_WEIGHTS[mode === "trainer" ? "trainer" : "bow"];
   const components = {};
@@ -434,6 +465,7 @@ export function computeFloatScoreV3FromTrace(trace, options = {}) {
     holdMeanRoll,
     mcrMs: clicker ? clicker.mcrMs : null,
     mcrLabel: clicker ? clicker.label : null,
+    ...(v3BowTip(points, t0) || {}),
   };
   const scored = v3ScoreFromMetrics(metrics, mode);
   return { ...scored, metrics };

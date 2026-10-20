@@ -135,3 +135,30 @@ test("v3 scoring is deterministic and clamps invalid input", () => {
   assert.equal(computeFloatScoreV3FromTrace([], { releaseMode: "trainer" }).formScore, null);
   assert.equal(v3ScoreFromMetrics({}, "trainer").formScore, null);
 });
+
+
+function makeTipTrace(tipDeg = -20) {
+  const releaseIndex = Math.round(1.5 * RATE);
+  const points = [];
+  for (let i = 0; i < Math.round(3 * RATE); i += 1) {
+    const tUs = (i - releaseIndex) * DT_US;
+    let pitch = 0;
+    if (i > releaseIndex + 20) {
+      const progress = Math.min(1, (i - releaseIndex - 20) / 84);
+      pitch = tipDeg * progress;
+    }
+    points.push({ tUs, roll: 0, pitch, yaw: 0 });
+  }
+  return points;
+}
+
+test("bow tip reports the forward pitch roll as a diagnostic, not a score", () => {
+  const result = computeFloatScoreV3FromTrace(makeTipTrace(-20), { releaseMode: "trainer" });
+  assert.ok(Math.abs(result.metrics.bowTipDeg + 20) < 2, `tip ${result.metrics.bowTipDeg}`);
+  assert.ok(result.metrics.bowTipMono >= 90, `mono ${result.metrics.bowTipMono}`);
+  assert.ok(result.metrics.bowTipMs != null && result.metrics.bowTipMs > 200, `ms ${result.metrics.bowTipMs}`);
+  assert.ok(result.metrics.bowTipRate > 40, `rate ${result.metrics.bowTipRate}`);
+  // The smooth tip is removed by the follow-through detrend, so the composite
+  // stays high: bow tip is reported, not scored.
+  assert.ok(result.formScore >= 95, `score ${result.formScore}`);
+});
