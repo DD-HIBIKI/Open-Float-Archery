@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { generateSampleData } from "../app/data/sample-data.js";
+import { shotV3Score } from "../app/telemetry/score.js";
 import {
   buildSessionImpactReview,
   buildSessionOutcomeReview,
@@ -118,4 +119,53 @@ test("impact markers use the same shooting order as the scorecard", () => {
   const html = buildSessionImpactReview([...shots].reverse());
   assert.match(html, /<title>6 - arrow 1<\/title>/);
   assert.match(html, /<title>5 - arrow 6<\/title>/);
+});
+
+
+function v3Shot(id, minute, v1Score, v3Metrics, extra = {}) {
+  return {
+    id,
+    timestamp: new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString(),
+    shot_score: v1Score,
+    v3_version: "openfloat-float-score-v3",
+    v3_mode: "trainer",
+    hold_sway: 0.3,
+    aim_drift: 2,
+    follow_smooth: 0.5,
+    release_torque: 1,
+    ...v3Metrics,
+    ...extra,
+  };
+}
+
+test("v3 captures drive the session review instead of the structurally-zero v1 release", () => {
+  const shots = [
+    v3Shot("a", 1, 43, { hold_sway: 0.3, aim_drift: 2, follow_smooth: 0.5 }),
+    v3Shot("b", 2, 41, { hold_sway: 0.5, aim_drift: 3, follow_smooth: 0.6 }),
+    v3Shot("c", 3, 12, { hold_sway: 0.4, aim_drift: 9, follow_smooth: 0.7 }),
+  ];
+  const expected = Math.round(
+    shots.map((shot) => shotV3Score(shot).formScore).reduce((sum, value) => sum + value, 0) / shots.length,
+  );
+  const html = buildSessionReview(shots);
+
+  assert.match(html, new RegExp(`<strong>${expected}</strong>`));
+  assert.match(html, /3 of 3 captures scored · v3/);
+  assert.match(html, /score-model-tag/);
+  assert.doesNotMatch(html, /Release disturbance/);
+  assert.match(html, /Aim drift|Hold sway|Follow-through/);
+  assert.match(html, /Aim drift/); // drift is the weakest component in this set
+  assert.match(buildSessionFloatPlot(shots), /v3 Trend/);
+});
+
+test("a single v3 capture is not enough and the review falls back to v1", () => {
+  const shots = [
+    v3Shot("only", 1, 50, {}),
+    { id: "v1-a", timestamp: new Date(Date.UTC(2026, 0, 1, 0, 2)).toISOString(), shot_score: 40 },
+    { id: "v1-b", timestamp: new Date(Date.UTC(2026, 0, 1, 0, 3)).toISOString(), shot_score: 60 },
+  ];
+  const html = buildSessionReview(shots);
+  assert.match(html, /<strong>50<\/strong>/);
+  assert.doesNotMatch(html, /score-model-tag/);
+  assert.match(buildSessionFloatPlot(shots), /Float Score Trend/);
 });

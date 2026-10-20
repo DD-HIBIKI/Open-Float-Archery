@@ -14,7 +14,7 @@
  * 对外接口：window.ofI18n = { t, setLang, getLang, has }
  */
 
-import dict from "./i18n/dict-zh.js?v=zh-5";
+import dict from "./i18n/dict-zh.js?v=zh-6";
 
 const LANG_KEY = "of-lang";
 const ZH = "zh";

@@ -3,7 +3,7 @@
 
 import { createStore, EventBus } from "./core/store.js?v=shot-store-180";
 import { watchSavedData } from "./core/saved-data.js?v=shot-store-174";
-import { TelemetryStore } from "./telemetry/telemetry.js?v=shot-store-204";
+import { TelemetryStore } from "./telemetry/telemetry.js?v=shot-store-205";
 import { createAdapter } from "./device/adapters.js?v=shot-store-200";
 import { mountDashboard, mountLog } from "./ui/dashboard.js?v=shot-store-163";
 import {
@@ -24,17 +24,17 @@ import {
   rotateMountAxes,
 } from "./ui/bow-3d.js?v=shot-store-156";
 import { initDb, getAll, get, put, removeSavedShots } from "./core/db.js?v=shot-store-176";
-import { computeFloatScoreV3FromTrace } from "./telemetry/score.js?v=shot-store-204";
+import { computeFloatScoreV3FromTrace } from "./telemetry/score.js?v=shot-store-205";
 import { CloudSyncAdapter } from "./telemetry/sync.js?v=shot-store-176";
 import { mountTraining } from "./ui/training.js?v=shot-store-200";
 import { mountGuide } from "./ui/guide.js?v=shot-store-203";
 import { initDataBackup } from "./ui/data-backup.js?v=shot-store-176";
-import { initHistory } from "./ui/history.js?v=shot-store-204";
+import { initHistory } from "./ui/history.js?v=shot-store-205";
 import { mountBowProfiles } from "./ui/bow-profiles.js?v=shot-store-176";
 import { mountBrowserSupport } from "./ui/browser-support.js?v=shot-store-178";
 import { generateSampleData, SAMPLE_DEVICE_ID } from "./data/sample-data.js?v=shot-store-137";
 
-const APP_BUILD = "shot-store-204";
+const APP_BUILD = "shot-store-205";
 const MODEL_ATTITUDE_VERSION = 3;
 
 const ELEMENT_IDS = [

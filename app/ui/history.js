@@ -2,9 +2,9 @@
 
 import { getAll, get, readSavedReview, removeSavedShots, saveShotOutcome, saveSessionOverride, exportShotData, exportSelectedShots, groupShotsByTime, sessionOverrideForGroup, SESSION_GAP_MS } from "../core/db.js?v=shot-store-176";
 import { downloadJson, exportFileStamp } from "./download.js?v=shot-store-176";
-import { coachForScore } from "../telemetry/telemetry.js?v=shot-store-204";
+import { coachForScore } from "../telemetry/telemetry.js?v=shot-store-205";
 import { isTrainerCapture } from "../telemetry/release-mode.js?v=shot-store-202";
-import { scoreValue, shotFloatScore, averageShotScore, shotV3Score } from "../telemetry/score.js?v=shot-store-204";
+import { scoreValue, shotFloatScore, averageShotScore, shotV3Score } from "../telemetry/score.js?v=shot-store-205";
 import {
   buildScorecard,
   canRecordArrowOutcome,
@@ -489,6 +489,12 @@ export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab,
 
         const shotCount = group.shots.length;
         const avgScore = roundedScore(averageShotScore(group.shots)) ?? "--";
+        const v3Values = group.shots
+          .map((shot) => shotV3Score(shot)?.formScore)
+          .filter((value) => value != null);
+        const avgV3 = v3Values.length
+          ? Math.round(v3Values.reduce((sum, value) => sum + value, 0) / v3Values.length)
+          : null;
 
         const draft = drafts.find((candidate) => group.shots.some((shot) => candidate.shotIds.has(shot.id)));
         const editorBowId = draft ? draft.bow : override?.bow_profile_id || "";
@@ -524,6 +530,11 @@ export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab,
                 <span class="badge-label">Avg Float</span>
                 <span class="badge-val">${avgScore}</span>
               </span>
+              ${avgV3 == null ? "" : `
+              <span class="session-stat-badge">
+                <span class="badge-label">Avg v3</span>
+                <span class="badge-val">${avgV3}</span>
+              </span>`}
             </span>
             </button>
             <button class="session-edit-btn" type="button" title="Edit session name and bow" aria-label="Edit ${escapeHtml(sessionName)}, ${escapeHtml(dateStr)}" aria-expanded="false">✎</button>

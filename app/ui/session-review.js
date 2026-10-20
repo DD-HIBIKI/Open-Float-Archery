@@ -6,7 +6,7 @@ import {
   summarizeImpactGroup,
   summarizeSessionOutcomes,
 } from "../telemetry/outcome.js?v=shot-store-150";
-import { scoreValue, shotFloatScore, averageShotScore } from "../telemetry/score.js?v=shot-store-204";
+import { scoreValue, shotFloatScore, averageShotScore, shotV3Score } from "../telemetry/score.js?v=shot-store-205";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -72,6 +72,38 @@ function sessionTrendSummary(scores) {
   };
 }
 
+
+function shotV3Value(shot) {
+  const scored = shotV3Score(shot);
+  return scored && scored.formScore != null ? scored.formScore : null;
+}
+
+// v3 components are already 0-100 scores, so the weakest one names the issue the
+// same way the v1 ranking did - but without the structurally-zero release term.
+function v3IssueSummary(shots) {
+  const defs = [
+    { key: "holdSway", label: "Hold sway", detail: "The aim is still moving before the release." },
+    { key: "aimDrift", label: "Aim drift", detail: "The bow arm drops or creeps during the hold." },
+    { key: "followSmooth", label: "Follow-through", detail: "The bow keeps moving after the release." },
+    { key: "releaseTorque", label: "Release torque", detail: "The riser rolls at the break." },
+  ];
+  const ranked = defs
+    .map((def) => {
+      const values = shots
+        .filter((shot) => !(def.key === "releaseTorque" && shot.v3_mode === "trainer"))
+        .map((shot) => shotV3Score(shot)?.components?.[def.key])
+        .filter((value) => value != null);
+      return { ...def, count: values.length, avg: values.length ? sessionAverage(values) : Infinity };
+    })
+    .filter((def) => def.count > 0 && Number.isFinite(def.avg))
+    .sort((a, b) => a.avg - b.avg);
+  if (!ranked.length) {
+    return { label: "Need more data", detail: "Future scored shots will reveal a pattern.", value: "--" };
+  }
+  const issue = ranked[0];
+  return { label: issue.label, detail: issue.detail, value: `${Math.round(issue.avg)} avg` };
+}
+
 function recurringIssueSummary(shots) {
   const components = [
     { key: "hold_stability", label: "Hold steadiness", detail: "Float is moving before release." },
@@ -115,8 +147,15 @@ export function buildSessionReview(shots) {
     (a, b) => new Date(a.timestamp) - new Date(b.timestamp),
   );
   if (!chronological.length) return "";
-  const scored = chronological.filter((shot) => shotFloatScore(shot) != null);
-  const scores = scored.map(shotFloatScore);
+  // v3 wins as soon as two captures carry it: the v1 release term is structurally
+  // zero, so v1 session averages and its "recurring issue" are not trustworthy.
+  const v3Scored = chronological
+    .map((shot) => ({ shot, score: shotV3Value(shot) }))
+    .filter((entry) => entry.score != null);
+  const useV3 = v3Scored.length >= 2;
+  const scored = useV3 ? v3Scored.map((entry) => entry.shot)
+    : chronological.filter((shot) => shotFloatScore(shot) != null);
+  const scores = useV3 ? v3Scored.map((entry) => entry.score) : scored.map(shotFloatScore);
   if (!scores.length) return `
     <div class="session-review" aria-label="Session review summary">
       <div class="session-review-head"><span>Session Review</span><strong>--</strong></div>
@@ -124,15 +163,16 @@ export function buildSessionReview(shots) {
     </div>
   `;
 
-  const avg = Math.round(averageShotScore(scored));
+  const scoreOf = (shot) => (useV3 ? shotV3Value(shot) : shotFloatScore(shot));
+  const avg = Math.round(scores.reduce((sum, value) => sum + value, 0) / scores.length);
   const best = scored.reduce((winner, shot) =>
-    shotFloatScore(shot) > shotFloatScore(winner) ? shot : winner,
+    scoreOf(shot) > scoreOf(winner) ? shot : winner,
   scored[0]);
   const worst = scored.reduce((lowest, shot) =>
-    shotFloatScore(shot) < shotFloatScore(lowest) ? shot : lowest,
+    scoreOf(shot) < scoreOf(lowest) ? shot : lowest,
   scored[0]);
   const trend = sessionTrendSummary(scores);
-  const issue = recurringIssueSummary(chronological);
+  const issue = useV3 ? v3IssueSummary(chronological) : recurringIssueSummary(chronological);
 
   const drillCounts = new Map();
   for (const shot of chronological) {
@@ -148,22 +188,22 @@ export function buildSessionReview(shots) {
     <div class="session-review" aria-label="Session review summary">
       <div class="session-review-head">
         <span>Session Review</span>
-        <strong>${avg}</strong>
+        <strong>${avg}${useV3 ? ' <em class="score-model-tag">v3</em>' : ""}</strong>
       </div>
       <div class="session-review-grid">
         <div class="session-review-stat">
           <span>Average</span>
           <strong>${avg}</strong>
-          <small>${scores.length} of ${chronological.length} captures scored</small>
+          <small>${scores.length} of ${chronological.length} captures scored${useV3 ? " \u00b7 v3" : ""}</small>
         </div>
         <button class="session-review-stat as-button" type="button" data-review-shot-id="${escapeHtml(best.id)}">
           <span>Best Shot</span>
-          <strong>${Math.round(shotFloatScore(best))}</strong>
+          <strong>${Math.round(scoreOf(best))}</strong>
           <small>${escapeHtml(shotHistoryLabel(best))}</small>
         </button>
         <button class="session-review-stat as-button" type="button" data-review-shot-id="${escapeHtml(worst.id)}">
           <span>Needs Work</span>
-          <strong>${Math.round(shotFloatScore(worst))}</strong>
+          <strong>${Math.round(scoreOf(worst))}</strong>
           <small>${escapeHtml(shotHistoryLabel(worst))}</small>
         </button>
         <div class="session-review-stat">
@@ -189,7 +229,9 @@ export function buildSessionFloatPlot(shots) {
   const chronological = [...shots].sort(
     (a, b) => new Date(a.timestamp) - new Date(b.timestamp),
   );
-  const scores = chronological.map(shotFloatScore);
+  const v3Scores = chronological.map(shotV3Value);
+  const useV3 = v3Scores.filter((score) => score != null).length >= 2;
+  const scores = useV3 ? v3Scores : chronological.map(shotFloatScore);
   const usable = scores.filter((score) => score != null);
   const count = usable.length;
   if (!count) {
@@ -244,10 +286,10 @@ export function buildSessionFloatPlot(shots) {
   return `
     <div class="session-float-plot" aria-label="Session Float Score trend">
       <div class="session-float-plot-head">
-        <span>Float Score Trend</span>
+        <span>${useV3 ? "v3 Trend" : "Float Score Trend"}</span>
         <strong>${latest}</strong>
       </div>
-      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Float scores from ${count} of ${scores.length} session captures. Latest scored ${latest}, best ${best}, low ${low}.">
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${useV3 ? "v3" : "Float"} scores from ${count} of ${scores.length} session captures. Latest scored ${latest}, best ${best}, low ${low}.">
         <line x1="${padX}" y1="${padTop}" x2="${width - padX}" y2="${padTop}" class="session-float-grid"></line>
         <line x1="${padX}" y1="${padTop + plotH / 2}" x2="${width - padX}" y2="${padTop + plotH / 2}" class="session-float-grid"></line>
         <line x1="${padX}" y1="${height - padBottom}" x2="${width - padX}" y2="${height - padBottom}" class="session-float-grid baseline"></line>

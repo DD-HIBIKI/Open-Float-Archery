@@ -1685,7 +1685,20 @@ td:last-child {
   color: var(--cyan);
 }
 
-/* v3 preview score: secondary, visually distinct from the v1 Float value. */
+/* v3 preview score: secondary, visually distinct from the v1 Float value. */.score-model-tag {
+  font-style: normal;
+  font-size: 0.6em;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--amber);
+  border: 1px solid rgba(243, 191, 76, 0.5);
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
 .history-stat-val.soft,
 .recent-shot-metric .metric-val.soft {
   color: var(--muted);

@@ -17,7 +17,7 @@ import {
   computeLiveFloatScore,
   FLOAT_SCORE_VERSION,
   scoreValue,
-} from "./score.js?v=shot-store-204";
+} from "./score.js?v=shot-store-205";
 import {
   normalizeReleaseMode,
   releaseModeForThreshold,
