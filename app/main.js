@@ -3,7 +3,7 @@
 
 import { createStore, EventBus } from "./core/store.js?v=shot-store-180";
 import { watchSavedData } from "./core/saved-data.js?v=shot-store-174";
-import { TelemetryStore } from "./telemetry/telemetry.js?v=shot-store-202";
+import { TelemetryStore } from "./telemetry/telemetry.js?v=shot-store-204";
 import { createAdapter } from "./device/adapters.js?v=shot-store-200";
 import { mountDashboard, mountLog } from "./ui/dashboard.js?v=shot-store-163";
 import {
@@ -23,17 +23,18 @@ import {
   mountOrientationState,
   rotateMountAxes,
 } from "./ui/bow-3d.js?v=shot-store-156";
-import { initDb, getAll, put, removeSavedShots } from "./core/db.js?v=shot-store-176";
+import { initDb, getAll, get, put, removeSavedShots } from "./core/db.js?v=shot-store-176";
+import { computeFloatScoreV3FromTrace } from "./telemetry/score.js?v=shot-store-204";
 import { CloudSyncAdapter } from "./telemetry/sync.js?v=shot-store-176";
 import { mountTraining } from "./ui/training.js?v=shot-store-200";
 import { mountGuide } from "./ui/guide.js?v=shot-store-203";
 import { initDataBackup } from "./ui/data-backup.js?v=shot-store-176";
-import { initHistory } from "./ui/history.js?v=shot-store-202";
+import { initHistory } from "./ui/history.js?v=shot-store-204";
 import { mountBowProfiles } from "./ui/bow-profiles.js?v=shot-store-176";
 import { mountBrowserSupport } from "./ui/browser-support.js?v=shot-store-178";
 import { generateSampleData, SAMPLE_DEVICE_ID } from "./data/sample-data.js?v=shot-store-137";
 
-const APP_BUILD = "shot-store-203";
+const APP_BUILD = "shot-store-204";
 const MODEL_ATTITUDE_VERSION = 3;
 
 const ELEMENT_IDS = [
@@ -370,6 +371,53 @@ function initSettingsFromCache() {
 // removed as soon as real data shows up.
 const SAMPLE_CLEARED_KEY = "openfloat_samples_cleared";
 
+// v3 preview metrics are scale-independent (hold sway, aim drift, follow
+// smoothness, clicker timing). Saved captures from before the v3 rollout get
+// them once, lazily, so the preview score works on existing history without a
+// database version bump. Direct put() keeps this local: it is not user data and
+// must not create cloud upload tasks.
+async function backfillV3Metrics() {
+  try {
+    const shots = await getAll("shots");
+    const pending = shots.filter((shot) => shot && shot.v3_version == null);
+    if (!pending.length) return;
+    let updated = 0;
+    for (const shot of pending) {
+      if (shot.capture_kind === "hold") continue; // holds have no release instant
+      const trace = await get("shot_traces", shot.id);
+      const payload = trace?.payload;
+      if (!Array.isArray(payload) || payload.length < 64) continue;
+      // Only release-anchored traces carry t0 = 0; firmware/untimed traces and
+      // manual recordings are not comparable, so they keep no v3 metrics.
+      const source = String(trace.source || "");
+      if (!["browser", "sample"].includes(source)) continue;
+      const v3 = computeFloatScoreV3FromTrace(payload, {
+        micSeries: trace.mic_series || [],
+        releaseMode: shot.release_mode,
+        peakG: shot.peak_g,
+      });
+      if (v3.formScore == null && v3.metrics?.holdSway == null) continue;
+      await put("shots", {
+        ...shot,
+        score_v3: v3.formScore,
+        v3_version: v3.version,
+        v3_mode: v3.mode,
+        hold_sway: v3.metrics.holdSway,
+        aim_drift: v3.metrics.aimDrift,
+        release_torque: v3.metrics.releaseTorque,
+        follow_smooth: v3.metrics.followSmooth,
+        hold_mean_roll: v3.metrics.holdMeanRoll,
+        mcr_ms: v3.metrics.mcrMs,
+        mcr_label: v3.metrics.mcrLabel,
+      });
+      updated += 1;
+    }
+    if (updated) bus.emit("log", `Computed v3 preview metrics for ${updated} saved capture(s).`);
+  } catch (error) {
+    bus.emit("log", `v3 preview backfill failed: ${error.message}`);
+  }
+}
+
 async function seedSampleDataIfEmpty() {
   try {
     if (localStorage.getItem(SAMPLE_CLEARED_KEY) === "1") return;
@@ -439,6 +487,7 @@ initDb().then(async (database) => {
     if (!await refreshSavedData(stores)) throw new Error("Some saved views could not refresh. Reopen Saved Shots or Settings to retry.");
   }, { onError: (error) => bus.emit("log", `Saved data remains local: ${error.message}`) });
   await seedSampleDataIfEmpty();
+  await backfillV3Metrics();
   await bowProfilesUi.load();
   await historyUi?.loadRecentShotsList();
   await updateSampleControls();

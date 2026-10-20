@@ -1685,6 +1685,12 @@ td:last-child {
   color: var(--cyan);
 }
 
+/* v3 preview score: secondary, visually distinct from the v1 Float value. */
+.history-stat-val.soft,
+.recent-shot-metric .metric-val.soft {
+  color: var(--muted);
+}
+
 /* Trace Review Mode Overlay Banner */
 .review-overlay {
   background: var(--panel-soft);

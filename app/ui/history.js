@@ -2,9 +2,9 @@
 
 import { getAll, get, readSavedReview, removeSavedShots, saveShotOutcome, saveSessionOverride, exportShotData, exportSelectedShots, groupShotsByTime, sessionOverrideForGroup, SESSION_GAP_MS } from "../core/db.js?v=shot-store-176";
 import { downloadJson, exportFileStamp } from "./download.js?v=shot-store-176";
-import { coachForScore } from "../telemetry/telemetry.js?v=shot-store-202";
+import { coachForScore } from "../telemetry/telemetry.js?v=shot-store-204";
 import { isTrainerCapture } from "../telemetry/release-mode.js?v=shot-store-202";
-import { scoreValue, shotFloatScore, averageShotScore } from "../telemetry/score.js?v=shot-store-150";
+import { scoreValue, shotFloatScore, averageShotScore, shotV3Score } from "../telemetry/score.js?v=shot-store-204";
 import {
   buildScorecard,
   canRecordArrowOutcome,
@@ -220,25 +220,49 @@ export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab,
     return value == null ? null : Math.round(value);
   }
 
+  function v3Value(shot) {
+    const scored = shotV3Score(shot);
+    return scored && scored.formScore != null ? scored.formScore : null;
+  }
+
+  function v3Breakdown(shot) {
+    const parts = [];
+    const number = (value, digits = 2) => (Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : null);
+    const sway = number(shot.hold_sway);
+    const drift = number(shot.aim_drift);
+    const follow = number(shot.follow_smooth);
+    if (sway) parts.push(`sway ${sway}\u00b0`);
+    if (drift) parts.push(`drift ${drift}\u00b0/s`);
+    if (follow) parts.push(`follow ${follow}\u00b0`);
+    if (shot.mcr_ms != null) parts.push(`MCRT ${Math.round(Number(shot.mcr_ms))} ms`);
+    return parts.join(" \u00b7 ");
+  }
+
   function captureMetrics(shot) {
     const score = roundedScore(shotFloatScore(shot));
     const stability = roundedScore(shot.stability_score);
     const rawPeak = shot.peak_g;
     const peak = typeof rawPeak === "string" && rawPeak.trim() ? Number(rawPeak) : rawPeak;
+    const v3 = v3Value(shot);
     return {
       score: score ?? "--",
+      v3: v3 == null ? "--" : String(v3),
       stability: stability == null ? "--" : `${stability}%`,
       peakG: typeof peak === "number" && Number.isFinite(peak) && peak >= 0 ? `${peak.toFixed(1)}g` : "--",
     };
   }
 
   function buildReviewInfo(shot) {
-    const { score, peakG, stability } = captureMetrics(shot);
+    const { score, v3, peakG, stability } = captureMetrics(shot);
     const outcome = normalizeArrowOutcome(shot);
     const outcomePart = outcome ? ` | Arrow: ${outcome.label}` : "";
     const timeStr = new Date(shot.timestamp).toLocaleTimeString();
     const demoPart = shot.sample === true || shot.device_id === "OpenFloat-Demo" ? "Demo capture | " : "";
-    return `${demoPart}Float Score: ${score}${outcomePart} | Peak Force: ${peakG} | Stability: ${stability} | Captured: ${timeStr}`;
+    const breakdown = shot.v3_version ? v3Breakdown(shot) : "";
+    const v3Part = v3 === "--"
+      ? ""
+      : ` | v3: ${v3}${breakdown ? ` (${breakdown})` : ""}`;
+    return `${demoPart}Float Score: ${score}${v3Part}${outcomePart} | Peak Force: ${peakG} | Stability: ${stability} | Captured: ${timeStr}`;
   }
 
   function updateOutcomeButtons() {
@@ -1111,9 +1135,9 @@ export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab,
       minute: "2-digit",
       second: "2-digit",
     });
-    const { score, stability, peakG } = captureMetrics(shot);
+    const { score, v3, stability, peakG } = captureMetrics(shot);
     const arrow = canRecordArrowOutcome(shot) ? formatShotOutcome(shot) : null;
-    return { timeStr, score, stability, peakG, arrow };
+    return { timeStr, score, v3, stability, peakG, arrow };
   }
 
   function buildHistoryItemElement(shot) {
@@ -1126,7 +1150,7 @@ export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab,
 
     const timestampStr = new Date(shot.timestamp).toLocaleTimeString();
     const title = shotHistoryLabel(shot);
-    const { score, stability, peakG } = captureMetrics(shot);
+    const { score, v3, stability, peakG } = captureMetrics(shot);
     const arrow = canRecordArrowOutcome(shot) ? formatShotOutcome(shot) : null;
     const arrowMetric = arrow == null
       ? ""
@@ -1134,6 +1158,14 @@ export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab,
           <div class="history-stat">
             <span class="history-stat-label">Arrow</span>
             <span class="history-stat-val arrow">${escapeHtml(arrow)}</span>
+          </div>
+        `;
+    const v3Metric = v3 === "--"
+      ? ""
+      : `
+          <div class="history-stat">
+            <span class="history-stat-label">v3</span>
+            <span class="history-stat-val soft">${v3}</span>
           </div>
         `;
 
@@ -1153,6 +1185,7 @@ export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab,
             <span class="history-stat-label">Float</span>
             <span class="history-stat-val score">${score}</span>
           </div>
+          ${v3Metric}
           <div class="history-stat">
             <span class="history-stat-label">Stability</span>
             <span class="history-stat-val stability">${stability}</span>
@@ -1316,9 +1349,9 @@ export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab,
     item.className = "recent-shot-card";
     item.dataset.shotId = shot.id;
 
-    const { timeStr, score, stability, peakG, arrow } = recentShotCardMetrics(shot);
+    const { timeStr, score, v3, stability, peakG, arrow } = recentShotCardMetrics(shot);
     const title = shotHistoryLabel(shot, Math.max(1, totalShots - titleIndex));
-    item.setAttribute("aria-label", `Review ${title}, ${timeStr}. Float ${score}${arrow == null ? "" : `, arrow ${arrow}`}`);
+    item.setAttribute("aria-label", `Review ${title}, ${timeStr}. Float ${score}${v3 === "--" ? "" : `, v3 ${v3}`}${arrow == null ? "" : `, arrow ${arrow}`}`);
     const arrowMetric = arrow == null
       ? ""
       : `
@@ -1342,6 +1375,11 @@ export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab,
           <span class="metric-label">Float</span>
           <strong class="metric-val score">${score}</strong>
         </span>
+        ${v3 === "--" ? "" : `
+        <span class="recent-shot-metric">
+          <span class="metric-label">v3</span>
+          <strong class="metric-val soft">${v3}</strong>
+        </span>`}
         <span class="recent-shot-metric">
           <span class="metric-label">Stability</span>
           <strong class="metric-val stability">${stability}</strong>

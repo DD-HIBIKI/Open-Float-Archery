@@ -13,10 +13,11 @@ import {
 } from "../protocol/trace.js?v=shot-store-155";
 import {
   computeFloatScoreFromTrace,
+  computeFloatScoreV3FromTrace,
   computeLiveFloatScore,
   FLOAT_SCORE_VERSION,
   scoreValue,
-} from "./score.js?v=shot-store-150";
+} from "./score.js?v=shot-store-204";
 import {
   normalizeReleaseMode,
   releaseModeForThreshold,
@@ -936,6 +937,14 @@ export class TelemetryStore {
         releaseIndex: releaseIndex >= 0 ? releaseIndex : undefined,
       });
       const endLost = frozenWithTime.at(-1)?.lost ?? startLost;
+      // v3 preview metrics are scale-independent; the score is derived from
+      // them at display time so tuning the scales later does not require a
+      // re-capture or a database migration.
+      const v3 = computeFloatScoreV3FromTrace(frozen, {
+        micSeries,
+        releaseMode: configuredReleaseMode(),
+        peakG: shot?.peak_g,
+      });
       updatedShot = await saveShotTrace(tracePayload, {
         stability_score: traceScore.holdStability,
         shot_score: traceScore.formScore,
@@ -945,6 +954,16 @@ export class TelemetryStore {
         level_consistency: traceScore.levelConsistency,
         score_version: traceScore.scoreVersion,
         packet_loss_count: Math.max(0, endLost - startLost),
+        score_v3: v3.formScore,
+        v3_version: v3.version,
+        v3_mode: v3.mode,
+        hold_sway: v3.metrics.holdSway,
+        aim_drift: v3.metrics.aimDrift,
+        release_torque: v3.metrics.releaseTorque,
+        follow_smooth: v3.metrics.followSmooth,
+        hold_mean_roll: v3.metrics.holdMeanRoll,
+        mcr_ms: v3.metrics.mcrMs,
+        mcr_label: v3.metrics.mcrLabel,
       });
     } catch (error) {
       console.error("Delayed browser trace save failed:", error);
@@ -962,6 +981,7 @@ export class TelemetryStore {
         active.lastShot?.shotId === deviceShotId) {
       this.store.set({
         formScore: traceScore.formScore,
+        formScoreV3: v3.formScore,
         holdStability: traceScore.holdStability,
         releaseQuality: traceScore.releaseQuality,
         followThrough: traceScore.followThrough,

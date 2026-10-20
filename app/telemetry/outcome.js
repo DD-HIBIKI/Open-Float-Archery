@@ -1,7 +1,7 @@
 // Arrow-result analytics. These helpers are intentionally local and
 // deterministic so target scores never require an account or cloud service.
 
-import { scoreValue } from "./score.js?v=shot-store-150";
+import { scoreValue } from "./score.js?v=shot-store-204";
 
 export const OUTCOME_METRICS = Object.freeze([
   Object.freeze({ key: "hold_stability", label: "Hold stability" }),

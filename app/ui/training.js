@@ -2,7 +2,7 @@
 // Manages the prep countdown, audio tones, live target tracing, scoring, and DB persistence.
 
 import { getAll, saveCapture, generateUUID } from "../core/db.js?v=shot-store-176";
-import { computeFloatScoreFromTrace } from "../telemetry/score.js?v=shot-store-150";
+import { computeFloatScoreFromTrace } from "../telemetry/score.js?v=shot-store-204";
 import {
   TRAINING_DRILLS,
   analyzeTrainingHistory,
