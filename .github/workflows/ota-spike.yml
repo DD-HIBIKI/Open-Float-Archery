@@ -37,19 +37,32 @@ jobs:
             -d "$GITHUB_WORKSPACE/openfloat/firmware/build-ci" \
             "$GITHUB_WORKSPACE/openfloat/firmware"
 
-      - name: Show partition layout and OTA artifacts
+      - name: Verify OTA configuration
         run: |
           cd openfloat/firmware/build-ci
-          echo "=== top level ==="
-          ls -la
+          echo "=== config files ==="
+          find . -maxdepth 3 -name .config | sort
+          echo
+          for f in $(find . -maxdepth 3 -name .config | sort); do
+            echo "--- $f"
+            grep -E '^CONFIG_(MCUMGR|MCUMGR_TRANSPORT_BT|MCUMGR_GRP_IMG|MCUMGR_GRP_OS|MCUMGR_BUF_SIZE|NET_BUF|ZCBOR|IMG_MANAGER|BOOTLOADER_MCUBOOT)=' "$f" || echo "(no OTA symbols)"
+            echo
+          done
           echo "=== images ==="
           find . -maxdepth 3 \( -name '*.hex' -o -name '*.bin' -o -name '*.zip' \) | sort
-          echo "=== partition manager output (app) ==="
-          grep -E 'PM_PARTITION|PARTITION_SIZE|FLASH_LOAD' zephyr/.config | head -30 || true
-          echo "=== mcuboot config (key bits) ==="
-          grep -E 'MCUBOOT_MODE|BOOTLOADER_MCUBOOT|MCUMGR' zephyr/.config | head -30 || true
-          echo "=== mcuboot child image config ==="
-          test -f mcuboot/zephyr/.config && grep -E 'FLASH|RRAM|MPU_ALLOW' mcuboot/zephyr/.config | head -20 || echo "(no mcuboot child build dir)"
+          echo
+          if find . -maxdepth 3 -name .config -exec grep -l '^CONFIG_MCUMGR=y' {} + | grep -q .; then
+            echo "OK: CONFIG_MCUMGR=y in the application image"
+          else
+            echo "::error::CONFIG_MCUMGR was dropped by Kconfig; OTA would silently not work"
+            exit 1
+          fi
+          if find . -maxdepth 3 -name .config -exec grep -l '^CONFIG_MCUMGR_TRANSPORT_BT=y' {} + | grep -q .; then
+            echo "OK: CONFIG_MCUMGR_TRANSPORT_BT=y (SMP over BLE)"
+          else
+            echo "::error::SMP-over-BLE transport is not enabled"
+            exit 1
+          fi
 
       - name: Upload OTA artifacts
         uses: actions/upload-artifact@v7
