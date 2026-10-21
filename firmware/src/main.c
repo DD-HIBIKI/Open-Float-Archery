@@ -529,7 +529,13 @@ static K_MUTEX_DEFINE(trace_upload_mutex);
 static int buffer_rate_hz = 52;
 static int buffer_nvs_enabled = 1;
 static int ble_stream_divider = 1;
-static int auto_sleep_enabled = 1;
+/*
+ * Automatic System OFF sleep stays off by default until the wake path is
+ * verified on hardware: a wrong sense level wakes the SoC the instant it powers
+ * down, which shows up as a reboot loop instead of a sleeping device. Enable it
+ * with "autosleep:1" once wake-by-motion is confirmed.
+ */
+static int auto_sleep_enabled = 0;
 static uint32_t follow_through_ms = 1500;
 
 static struct k_work_delayable trace_persist_work;
