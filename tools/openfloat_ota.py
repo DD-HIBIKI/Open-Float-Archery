@@ -443,7 +443,12 @@ async def run(args) -> int:
                 if rc != 0:
                     # This build has no mcumgr OS-reset command; the firmware
                     # exposes a plain "reboot" command on the control service.
-                    await client.write_gatt_char(CONTROL_CHAR, b"reboot", response=True)
+                    # The link usually drops before the ATT response arrives, so
+                    # a transport error here means the reboot is under way.
+                    try:
+                        await client.write_gatt_char(CONTROL_CHAR, b"reboot", response=True)
+                    except OSError:
+                        pass
                     print("Sent the 'reboot' control command.")
                 else:
                     print("Device acknowledged the reset.")
