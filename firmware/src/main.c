@@ -2436,6 +2436,12 @@ static ssize_t handle_openfloat_control(struct bt_conn *conn,
 			printk("# BLE control: invalid auto sleep command '%s'\n", command);
 			return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
 		}
+	} else if (!strncmp(command, "reboot", strlen("reboot"))) {
+		/* Needed so an OTA update can finish without a debug probe: MCUboot
+		 * swaps the pending image in on the next reset. */
+		printk("# BLE control: rebooting\n");
+		k_sleep(K_MSEC(100));
+		sys_reboot(SYS_REBOOT_COLD);
 	} else if (!strncmp(command, "streamrate:", strlen("streamrate:"))) {
 		uint32_t value;
 		if (openfloat_parse_u32(command + strlen("streamrate:"), &value) &&

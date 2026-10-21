@@ -36,9 +36,15 @@ from pathlib import Path
 
 SMP_SERVICE = "8d53dc1d-1db7-4cd3-868b-8a527460aa84"
 SMP_CHAR = "da2e7828-fbce-4e01-ae9e-261174997c48"
+CONTROL_CHAR = "8f3f3b10-0f5a-4f4c-9a2d-000000000003"
 
-SMP_OP_WRITE = 2
-SMP_OP_WRITE_RSP = 3
+# The SMP header's op byte is the mcumgr management operation: read commands
+# (image state) use MGMT_OP_READ, write commands (upload, reset) use
+# MGMT_OP_WRITE. The dispatcher rejects the wrong one with MGMT_ERR_EINVAL.
+MGMT_OP_READ = 0
+MGMT_OP_WRITE = 2
+MGMT_OP_READ_RSP = 1
+MGMT_OP_WRITE_RSP = 3
 SMP_FLAG_RESPONSE = 0x01
 
 GROUP_OS = 0
@@ -113,6 +119,9 @@ def _cbor_decode(data: bytes, offset: int):
     elif info == 27:
         argument = struct.unpack_from(">Q", data, offset)[0]
         offset += 8
+    elif info == 31:
+        # Indefinite length: the per-major-type code below reads until a break.
+        argument = 0
     else:
         raise ValueError(f"unsupported CBOR additional info {info}")
 
@@ -120,18 +129,44 @@ def _cbor_decode(data: bytes, offset: int):
         return argument, offset
     if major == 1:
         return -1 - argument, offset
+    indefinite = info == 31
     if major == 2:
+        if indefinite:
+            chunks = b""
+            while True:
+                if data[offset] == 0xFF:
+                    return chunks, offset + 1
+                chunk, offset = _cbor_decode(data, offset)
+                chunks += chunk
         return data[offset:offset + argument], offset + argument
     if major == 3:
+        if indefinite:
+            chunks = ""
+            while True:
+                if data[offset] == 0xFF:
+                    return chunks, offset + 1
+                chunk, offset = _cbor_decode(data, offset)
+                chunks += chunk
         return data[offset:offset + argument].decode("utf-8", "replace"), offset + argument
     if major == 4:
         items = []
+        if indefinite:
+            while data[offset] != 0xFF:
+                item, offset = _cbor_decode(data, offset)
+                items.append(item)
+            return items, offset + 1
         for _ in range(argument):
             item, offset = _cbor_decode(data, offset)
             items.append(item)
         return items, offset
     if major == 5:
         result = {}
+        if indefinite:
+            while data[offset] != 0xFF:
+                key, offset = _cbor_decode(data, offset)
+                value, offset = _cbor_decode(data, offset)
+                result[key] = value
+            return result, offset + 1
         for _ in range(argument):
             key, offset = _cbor_decode(data, offset)
             value, offset = _cbor_decode(data, offset)
@@ -173,10 +208,11 @@ class SmpClient:
     def _on_notify(self, _sender, data: bytearray) -> None:
         self._queue.put_nowait(bytes(data))
 
-    async def request(self, group: int, command: int, payload: bytes, timeout: float = 8.0) -> dict:
+    async def request(self, group: int, command: int, payload: bytes, timeout: float = 8.0,
+                      op: int = MGMT_OP_WRITE) -> dict:
         self._seq = (self._seq + 1) & 0xFF
         seq = self._seq
-        header = struct.pack(">BBHHBB", SMP_OP_WRITE, 0, len(payload), group, seq, command)
+        header = struct.pack(">BBHHBB", op, 0, len(payload), group, seq, command)
         await self._client.write_gatt_char(self._char, header + payload, response=False)
 
         deadline = time.monotonic() + timeout
@@ -193,9 +229,11 @@ class SmpClient:
             self._buffer += chunk
             if len(self._buffer) < 8:
                 continue
-            op, flags, length, rsp_group, rsp_seq, rsp_id = struct.unpack(">BBHHBB", self._buffer[:8])
-            if not (flags & SMP_FLAG_RESPONSE) or op != SMP_OP_WRITE_RSP:
-                # Not a response (or a stale one): keep looking.
+            rsp_op, _flags, length, rsp_group, rsp_seq, rsp_id = struct.unpack(">BBHHBB", self._buffer[:8])
+            # The server replies with READ_RSP/WRITE_RSP and leaves the flags
+            # byte at 0, so the op code (not the flag) identifies a response.
+            expected_rsp = MGMT_OP_READ_RSP if op == MGMT_OP_READ else MGMT_OP_WRITE_RSP
+            if rsp_op != expected_rsp:
                 self._buffer = b""
                 continue
             if rsp_seq != seq:
@@ -219,9 +257,9 @@ def _mgmt_rc(response: dict) -> int:
 
 def _smp_error(rc: int) -> str:
     names = {
-        0: "EOK", 1: "EUNKNOWN", 2: "ENOMEM", 3: "ENOSYS", 4: "EINVAL",
-        5: "ETIMEOUT", 6: "ENOENT", 7: "EBADSTATE", 8: "EMSGSIZE",
-        9: "ENOTSUP", 10: "ECORRUPT", 11: "EIO", 12: "EPERM",
+        0: "EOK", 1: "EUNKNOWN", 2: "ENOMEM", 3: "EINVAL", 4: "ETIMEOUT",
+        5: "ENOENT", 6: "EBADSTATE", 7: "EMSGSIZE", 8: "ENOTSUP",
+        9: "ECORRUPT", 10: "EIO", 11: "EPERM",
     }
     return names.get(rc, f"rc={rc}")
 
@@ -244,6 +282,16 @@ def load_image(path: Path) -> bytes:
     data = path.read_bytes()
     print(f"Image: {path.name} ({len(data)} bytes)")
     return data
+
+
+def image_version(data: bytes) -> str:
+    """MCUboot image version ("maj.min.rev.build") from the signed header."""
+    if len(data) < 0x1C:
+        return ""
+    major, minor = data[0x14], data[0x15]
+    rev = struct.unpack_from("<H", data, 0x16)[0]
+    build = struct.unpack_from("<I", data, 0x18)[0]
+    return f"{major}.{minor}.{rev}.{build}"
 
 
 def describe_images(response: dict) -> None:
@@ -292,6 +340,10 @@ async def run(args) -> int:
             mtu = client.mtu_size
         except Exception:
             mtu = 0
+        if not mtu or mtu <= 23:
+            # WinRT reports the 23-byte ATT default even after MTU exchange; the
+            # device negotiates 212 (CONFIG_BT_L2CAP_TX_MTU), i.e. 209 usable.
+            mtu = 212
         payload_limit = max(64, (mtu - 3) if mtu else 244)
         chunk_size = args.chunk or max(48, min(160, payload_limit - 8 - 24))
         print(f"MTU {mtu or 'unknown'} -> {chunk_size}-byte image chunks")
@@ -299,7 +351,8 @@ async def run(args) -> int:
         smp = SmpClient(client, SMP_CHAR)
         await smp.start()
         try:
-            state = await smp.request(GROUP_IMG, IMG_MGMT_ID_STATE, cbor_map({}))
+            state = await smp.request(GROUP_IMG, IMG_MGMT_ID_STATE, cbor_map({}),
+                                      op=MGMT_OP_READ)
             if _mgmt_rc(state) != MGMT_ERR_EOK:
                 print(f"image list failed: {_smp_error(_mgmt_rc(state))}")
                 return 3
@@ -317,13 +370,20 @@ async def run(args) -> int:
             total = len(image)
             while offset < total:
                 piece = image[offset:offset + chunk_size]
-                payload = cbor_map({
+                fields = {
                     "image": cbor_uint(0),
                     "data": cbor_bytes(piece),
                     "off": cbor_uint(offset),
                     # Absent "upgrade" => test image, so MCUboot can roll back
                     # if this firmware never confirms itself.
-                })
+                }
+                if offset == 0:
+                    # The first request must carry the total length and the image
+                    # hash; mcumgr rejects it with EINVAL otherwise (and so does
+                    # every later request, because the upload context is unset).
+                    fields["len"] = cbor_uint(total)
+                    fields["sha"] = cbor_bytes(digest)
+                payload = cbor_map(fields)
                 try:
                     response = await smp.request(GROUP_IMG, IMG_MGMT_ID_UPLOAD, payload, timeout=args.timeout)
                 except TimeoutError as error:
@@ -347,29 +407,63 @@ async def run(args) -> int:
                     return 4
 
             print()
-            final = await smp.request(GROUP_IMG, IMG_MGMT_ID_STATE, cbor_map({}))
-            print("Images after upload:")
-            describe_images(final)
-
+            final = await smp.request(GROUP_IMG, IMG_MGMT_ID_STATE, cbor_map({}),
+                                      op=MGMT_OP_READ)
             state_images = final.get("images") or []
-            matches = any(
-                isinstance(image_info.get("hash"), bytes) and image_info["hash"][:32] == digest
-                for image_info in state_images
-            )
-            if matches:
-                print("OK: device holds the uploaded image (hash match)")
-            else:
-                print("WARNING: uploaded image hash not reported by the device")
+
+            target_version = image_version(image)
+            staged = next((info for info in state_images
+                           if str(info.get("version")) == target_version and not info.get("active")),
+                          None)
+            if staged is None:
+                print(f"WARNING: image {target_version} is not visible in the slot list")
+            elif isinstance(staged.get("hash"), bytes) and staged["hash"]:
+                # Writing the slot hash with confirm:false marks the image as a
+                # test image; MCUboot then swaps it in on the next reset.
+                rsp = await smp.request(GROUP_IMG, IMG_MGMT_ID_STATE,
+                                        cbor_map({"hash": cbor_bytes(staged["hash"]),
+                                                  "confirm": b"\xf4"}),
+                                        op=MGMT_OP_WRITE)
+                rc = _mgmt_rc(rsp)
+                print(f"=== staged {target_version} in slot {staged.get('slot')} as a test image"
+                      + ("" if rc == 0 else f" (FAILED: {_smp_error(rc)})"))
+
+            print("Images after staging:")
+            describe_images(await smp.request(GROUP_IMG, IMG_MGMT_ID_STATE, cbor_map({}),
+                                              op=MGMT_OP_READ))
 
             if args.reset:
-                print("Resetting device into the new image...")
-                await smp.request(GROUP_OS, OS_MGMT_ID_RESET, cbor_map({}), timeout=3.0)
+                print("Rebooting into the new image...")
+                rc = 0
+                try:
+                    rc = _mgmt_rc(await smp.request(GROUP_OS, OS_MGMT_ID_RESET,
+                                                    cbor_map({}), timeout=3.0))
+                except TimeoutError:
+                    rc = 0  # rebooting before answering is fine
+                if rc != 0:
+                    # This build has no mcumgr OS-reset command; the firmware
+                    # exposes a plain "reboot" command on the control service.
+                    await client.write_gatt_char(CONTROL_CHAR, b"reboot", response=True)
+                    print("Sent the 'reboot' control command.")
+                else:
+                    print("Device acknowledged the reset.")
             else:
-                print("Image is staged as a test image; reboot the device to run it "
-                      "(or pass --reset).")
+                print("Image is staged; reboot the device to run it (or pass --reset).")
             return 0
         finally:
             await smp.stop()
+
+
+async def run_with_retry(args) -> int:
+    # The Windows WinRT BLE stack intermittently cancels GATT operations right
+    # after a reconnect; retrying the whole session is the reliable fix.
+    for attempt in range(1, 4):
+        try:
+            return await run(args)
+        except OSError as error:
+            print(f"\nBLE stack error (attempt {attempt}/3): {error}")
+            await asyncio.sleep(3)
+    return 3
 
 
 def main() -> int:
@@ -384,7 +478,7 @@ def main() -> int:
     if not args.list and not args.image:
         parser.error("pass --list or --image")
     try:
-        return asyncio.run(run(args))
+        return asyncio.run(run_with_retry(args))
     except KeyboardInterrupt:
         return 130
 
