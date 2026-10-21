@@ -42,12 +42,37 @@ jobs:
       # Build the freestanding app out-of-tree from inside the west workspace.
       # NCS v3.3.0 ships the xiao_nrf54l15 board, so no BOARD_ROOT is needed
       # (passing one fails the build; see firmware/BUILDING.md).
+      - name: Stamp build version
+        working-directory: openfloat
+        run: |
+          # MCUboot reports this as the image version, so each build is
+          # distinguishable from the one it replaced.
+          sed -i -E "s/^VERSION_TWEAK = .*/VERSION_TWEAK = ${GITHUB_RUN_NUMBER}/" firmware/VERSION
+          cat firmware/VERSION
+
       - name: Build firmware
         working-directory: ncs
         run: |
           west build -p always -b xiao_nrf54l15/nrf54l15/cpuapp \
             -d "$GITHUB_WORKSPACE/openfloat/firmware/build-ci" \
             "$GITHUB_WORKSPACE/openfloat/firmware"
+
+      - name: Verify MCUboot + mcumgr configuration
+        working-directory: openfloat
+        run: |
+          cd firmware/build-ci
+          echo "=== OTA symbols in the application image ==="
+          grep -E '^CONFIG_(MCUMGR|MCUMGR_TRANSPORT_BT|MCUMGR_GRP_IMG|MCUMGR_GRP_OS|MCUBOOT_IMG_MANAGER|IMG_MANAGER|ZCBOR|NET_BUF|BOOTLOADER_MCUBOOT)=' firmware/zephyr/.config || true
+          for symbol in CONFIG_MCUMGR CONFIG_MCUMGR_TRANSPORT_BT CONFIG_MCUBOOT_IMG_MANAGER CONFIG_BOOTLOADER_MCUBOOT; do
+            if grep -q "^${symbol}=y" firmware/zephyr/.config; then
+              echo "OK: ${symbol}=y"
+            else
+              echo "::error::${symbol} is not enabled; OTA would silently not work"
+              exit 1
+            fi
+          done
+          echo "=== artifacts ==="
+          ls -l merged.hex dfu_application.zip firmware/zephyr/zephyr.signed.bin
 
       - name: Verify compiled BLE UUIDs
         working-directory: openfloat
@@ -57,9 +82,12 @@ jobs:
         working-directory: openfloat
         run: python3 tools/verify_trace_storage.py --zephyr ../ncs/zephyr --cc cc
 
-      - name: Upload merged.hex
+      - name: Upload firmware artifacts
         uses: actions/upload-artifact@v7
         with:
           name: openfloat-merged-hex
-          path: openfloat/firmware/build-ci/merged.hex
+          path: |
+            openfloat/firmware/build-ci/merged.hex
+            openfloat/firmware/build-ci/dfu_application.zip
+            openfloat/firmware/build-ci/firmware/zephyr/zephyr.signed.bin
           if-no-files-found: error

@@ -42,6 +42,9 @@
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/sys/poweroff.h>
 #include <zephyr/sys/reboot.h>
+#if defined(CONFIG_MCUBOOT_IMG_MANAGER)
+#include <zephyr/dfu/mcuboot.h>
+#endif
 #include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/regulator.h>
 
@@ -2942,6 +2945,29 @@ static void print_cpu_load_if_due(uint64_t now_us)
 	       audio_read_failures, (uint32_t)audio_peak_raw);
 }
 
+#if defined(CONFIG_MCUBOOT_IMG_MANAGER)
+/*
+ * mcumgr installs an uploaded image as a "test" image: MCUboot swaps it in and
+ * boots it once, but reverts to the previous image on the next reset unless the
+ * new image confirms itself. Confirm shortly after the bring-up in main() so a
+ * firmware that dies during init still rolls back on its own.
+ */
+static void confirm_image_work_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+
+	if (boot_is_img_confirmed()) {
+		return;
+	}
+
+	int err = boot_write_img_confirmed();
+
+	printk("# image confirmed: %d\n", err);
+}
+
+K_WORK_DELAYABLE_DEFINE(confirm_image_work, confirm_image_work_handler);
+#endif
+
 int main(void)
 {
 	struct quat q = {
@@ -2974,6 +3000,9 @@ int main(void)
 	k_work_init_delayable(&trace_upload_work, trace_upload_work_handler);
 	k_work_init_delayable(&adv_start_work, adv_start_work_handler);
 	init_user_led();
+#if defined(CONFIG_MCUBOOT_IMG_MANAGER)
+	k_work_schedule(&confirm_image_work, K_SECONDS(2));
+#endif
 	struct sleep_flush_values boot_defaults = persistent_values_snapshot();
 	const struct boot_restore_io boot_io = {
 		.context = &boot_defaults, .initialize = boot_initialize_settings,
