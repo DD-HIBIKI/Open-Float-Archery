@@ -3,7 +3,7 @@
 
 import { createStore, EventBus } from "./core/store.js?v=shot-store-180";
 import { watchSavedData } from "./core/saved-data.js?v=shot-store-174";
-import { TelemetryStore } from "./telemetry/telemetry.js?v=shot-store-206";
+import { TelemetryStore } from "./telemetry/telemetry.js?v=gyro-frame-1";
 import { createAdapter } from "./device/adapters.js?v=shot-store-200";
 import { mountDashboard, mountLog } from "./ui/dashboard.js?v=shot-store-163";
 import {
@@ -11,7 +11,7 @@ import {
   normalizeReleaseMode,
   releaseModeForThreshold,
   thresholdForReleaseMode,
-} from "./telemetry/release-mode.js?v=shot-store-202";
+} from "./telemetry/release-mode.js?v=gyro-frame-1";
 import { createReplayController, traceTimeline } from "./ui/replay.js?v=shot-store-155";
 import { tracePhases } from "./ui/trace-phases.js?v=shot-store-155";
 import {
@@ -29,12 +29,12 @@ import { CloudSyncAdapter } from "./telemetry/sync.js?v=shot-store-176";
 import { mountTraining } from "./ui/training.js?v=shot-store-200";
 import { mountGuide } from "./ui/guide.js?v=shot-store-203";
 import { initDataBackup } from "./ui/data-backup.js?v=shot-store-176";
-import { initHistory } from "./ui/history.js?v=shot-store-206";
+import { initHistory } from "./ui/history.js?v=gyro-frame-1";
 import { mountBowProfiles } from "./ui/bow-profiles.js?v=shot-store-176";
 import { mountBrowserSupport } from "./ui/browser-support.js?v=shot-store-178";
 import { generateSampleData, SAMPLE_DEVICE_ID } from "./data/sample-data.js?v=shot-store-137";
 
-const APP_BUILD = "shot-store-206";
+const APP_BUILD = "gyro-frame-1";
 const MODEL_ATTITUDE_VERSION = 3;
 
 const ELEMENT_IDS = [
@@ -54,7 +54,7 @@ const ELEMENT_IDS = [
   "navDashboardBtn", "navTrainingBtn", "navHistoryBtn", "navBowShopBtn", "navSettingsBtn", "navGuideBtn",
   "tabDashboard", "tabTraining", "tabHistory", "tabBowShop", "tabSettings", "tabGuide",
   "guideSidebar", "guideContent", "historyList",
-  "historyBulkActions", "bulkSelectCount", "bulkExportBtn", "bulkDeleteBtn", "bulkCancelBtn", "historySelectModeBtn", "bulkSelectAllBtn", "historyDefaultActions", "historyExportStatus", "historyHideTrainerToggle",
+  "historyBulkActions", "bulkSelectCount", "bulkExportBtn", "bulkDeleteBtn", "bulkCancelBtn", "historySelectModeBtn", "bulkSelectAllBtn", "historyDefaultActions", "historyExportStatus", "historyHideTrainerToggle", "historyHideFalseTriggerToggle",
   "trainingDrillSelect", "trainingDrillDescription", "trainingDurationSelect", "startTrainingBtn", "cancelTrainingBtn",
   "adaptiveCoachTitle", "adaptiveCoachText", "adaptiveCoachStats", "trainingReadyTitle", "trainingReadyText",
   "trainingStatusText", "trainingStatusDesc", "trainingDisplayDefault", "trainingDisplayActive",
@@ -176,6 +176,8 @@ const store = createStore({
     ? normalizeReleaseMode(cached.releaseMode)
     : releaseModeForThreshold(cached.threshold !== undefined ? Number(cached.threshold) : 12.0),
   hideTrainerCaptures: !!cached.hideTrainer,
+  // False triggers are hidden by default: they are the noise the filter exists for.
+  hideFalseTriggers: cached.hideFalseTriggers === undefined ? true : !!cached.hideFalseTriggers,
   sample: null,
   syncStatus: "local",
   syncText: "Local-Only",
@@ -258,6 +260,7 @@ function saveSettingsToCache() {
       threshold: el.thresholdSlider.value,
       releaseMode: store.get().releaseMode,
       hideTrainer: !!store.get().hideTrainerCaptures,
+      hideFalseTriggers: !!store.get().hideFalseTriggers,
       wake: el.wakeSlider.value,
       sleepTimeout: el.sleepTimeoutSlider.value,
       sleepSens: el.sleepSensSlider.value,
@@ -359,6 +362,11 @@ function initSettingsFromCache() {
     }
     if (cached.hideTrainer !== undefined && el.historyHideTrainerToggle) {
       el.historyHideTrainerToggle.checked = !!cached.hideTrainer;
+    }
+    if (el.historyHideFalseTriggerToggle) {
+      el.historyHideFalseTriggerToggle.checked = cached.hideFalseTriggers === undefined
+        ? true
+        : !!cached.hideFalseTriggers;
     }
     syncReleaseModeUi();
   } catch (err) {
@@ -996,6 +1004,14 @@ if (el.historyHideTrainerToggle) {
     store.set({ hideTrainerCaptures: !!el.historyHideTrainerToggle.checked });
     saveSettingsToCache();
     bus.emit("trainer-filter-changed", store.get().hideTrainerCaptures);
+  });
+}
+
+if (el.historyHideFalseTriggerToggle) {
+  el.historyHideFalseTriggerToggle.addEventListener("change", () => {
+    store.set({ hideFalseTriggers: !!el.historyHideFalseTriggerToggle.checked });
+    saveSettingsToCache();
+    bus.emit("false-trigger-filter-changed", store.get().hideFalseTriggers);
   });
 }
 

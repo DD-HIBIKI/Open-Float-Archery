@@ -10,7 +10,7 @@
 //   "sample" -> Sample, "shot" -> Shot, "log" -> string,
 //   "status" -> { mode, text }
 
-import { decodeBinaryFrame } from "../protocol/frame.js?v=shot-store-199";
+import { decodeBinaryFrame } from "../protocol/frame.js?v=gyro-frame-1";
 
 const OPENFLOAT_SERVICE = "8f3f3b10-0f5a-4f4c-9a2d-000000000001";
 const OPENFLOAT_LIVE = "8f3f3b10-0f5a-4f4c-9a2d-000000000002";

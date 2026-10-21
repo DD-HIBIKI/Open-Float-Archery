@@ -2,8 +2,8 @@
 
 import { getAll, get, readSavedReview, removeSavedShots, saveShotOutcome, saveSessionOverride, exportShotData, exportSelectedShots, groupShotsByTime, sessionOverrideForGroup, SESSION_GAP_MS } from "../core/db.js?v=shot-store-176";
 import { downloadJson, exportFileStamp } from "./download.js?v=shot-store-176";
-import { coachForScore } from "../telemetry/telemetry.js?v=shot-store-206";
-import { isTrainerCapture } from "../telemetry/release-mode.js?v=shot-store-202";
+import { coachForScore } from "../telemetry/telemetry.js?v=gyro-frame-1";
+import { isFalseTriggerCapture, isTrainerCapture } from "../telemetry/release-mode.js?v=gyro-frame-1";
 import { scoreValue, shotFloatScore, averageShotScore, shotV3Score } from "../telemetry/score.js?v=shot-store-206";
 import {
   buildScorecard,
@@ -30,18 +30,31 @@ import { tracePhases } from "./trace-phases.js?v=shot-store-155";
 
 export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab, download = downloadJson }) {
   // Shots captured with the low-threshold trainer preset are real captures but
-  // not real arrows, so the saved-shot views can hide them on demand.
+  // not real arrows, so the saved-shot views can hide them on demand. Trainer
+  // captures whose impact was far above a real shot are false triggers instead:
+  // the gate fired on handling, a bump, or the draw.
   function trainerCapturesHidden() {
     return !!el.historyHideTrainerToggle?.checked;
   }
 
-  function filterTrainerCaptures(shots) {
-    if (!Array.isArray(shots) || !trainerCapturesHidden()) return shots;
-    return shots.filter((shot) => !isTrainerCapture(shot));
+  function falseTriggerCapturesHidden() {
+    return !!el.historyHideFalseTriggerToggle?.checked;
+  }
+
+  function filterHiddenCaptures(shots) {
+    const hideTrainer = trainerCapturesHidden();
+    const hideFalseTriggers = falseTriggerCapturesHidden();
+    if (!Array.isArray(shots) || (!hideTrainer && !hideFalseTriggers)) return shots;
+    return shots.filter((shot) => !(hideTrainer && isTrainerCapture(shot))
+      && !(hideFalseTriggers && isFalseTriggerCapture(shot)));
   }
 
   function trainerChipHtml(shot) {
     return isTrainerCapture(shot) ? ' <span class="trainer-chip">Trainer</span>' : "";
+  }
+
+  function falseTriggerChipHtml(shot) {
+    return isFalseTriggerCapture(shot) ? ' <span class="false-trigger-chip">Suspect</span>' : "";
   }
 
   // Escape user-entered text before injecting into innerHTML.
@@ -427,7 +440,7 @@ export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab,
         getAll("shots"), getAll("bow_profiles"), getAll("session_overrides"),
       ]);
       if (request !== historyRequest) return;
-      const shots = filterTrainerCaptures(allShots);
+      const shots = filterHiddenCaptures(allShots);
       // Capture interaction state immediately before replacing the rows, so
       // edits or focus changes made while the reads were pending also survive.
       const focused = document.activeElement;
@@ -1193,7 +1206,7 @@ export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab,
       <div class="history-item-body">
         <div class="history-meta">
           <button type="button" class="history-title history-review-btn" aria-label="Review ${escapeHtml(title)}, ${escapeHtml(timestampStr)}">${escapeHtml(title)}</button>
-          <div class="history-subtitle">${escapeHtml(timestampStr)}${trainerChipHtml(shot)}</div>
+          <div class="history-subtitle">${escapeHtml(timestampStr)}${trainerChipHtml(shot)}${falseTriggerChipHtml(shot)}</div>
         </div>
         <div class="history-metrics">
           ${arrowMetric}
@@ -1382,7 +1395,7 @@ export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab,
         <canvas class="recent-shot-preview"></canvas>
       </span>
       <span class="recent-shot-header">
-        <span class="recent-shot-title">${escapeHtml(title)}${trainerChipHtml(shot)}</span>
+        <span class="recent-shot-title">${escapeHtml(title)}${trainerChipHtml(shot)}${falseTriggerChipHtml(shot)}</span>
         <span class="recent-shot-time">${escapeHtml(timeStr)}</span>
       </span>
       <span class="recent-shot-metrics">
@@ -1444,7 +1457,7 @@ export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab,
     const request = ++recentRequest;
     try {
       const allShots = await getAll("shots");
-      const shots = filterTrainerCaptures(allShots);
+      const shots = filterHiddenCaptures(allShots);
       if (request !== recentRequest) return;
       if (!shots || shots.length === 0) {
         el.recentShotsList.innerHTML = `<p class="note" style="padding: 12px; text-align: center; width: 100%;">No shots captured in this session yet.</p>`;
@@ -1549,6 +1562,10 @@ export function initHistory({ bus, store, state, el, syncAdapter, selectViewTab,
   bus.on("shot-saved", refreshCaptureViews);
   bus.on("shot-trace-saved", refreshCaptureViews);
   bus.on("trainer-filter-changed", () => {
+    loadShotHistoryList();
+    loadRecentShotsList();
+  });
+  bus.on("false-trigger-filter-changed", () => {
     loadShotHistoryList();
     loadRecentShotsList();
   });

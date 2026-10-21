@@ -4825,6 +4825,25 @@ canvas,
   white-space: nowrap;
 }
 
+/* Marks a trainer-mode capture whose impact was far too large to be a shot.
+   Amber would read as "trainer capture", so the warning tint is orange. */
+.false-trigger-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid rgba(255, 138, 61, 0.6);
+  border-radius: 999px;
+  background: rgba(255, 138, 61, 0.16);
+  color: #ff8a3d;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
 /* ---- History: hide trainer captures ---- */
 #historyDefaultActions {
   display: inline-flex;

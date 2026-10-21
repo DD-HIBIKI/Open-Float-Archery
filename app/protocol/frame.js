@@ -1,7 +1,9 @@
 // OpenFloat telemetry frame parsing.
 //
 // Single source of truth for the on-wire formats shared by every transport:
-//   - BLE:    compact binary frames. Live v2 frames are 20 bytes; non-live
+//   - BLE:    compact binary frames. Live v2 frames are either 20 bytes
+//             (type 1, quaternion only, no gyro on the wire) or 26 bytes
+//             (type 8, appends gx/gy/gz Q4 dps after the mic byte); non-live
 //             management/trace frames remain 29 bytes.
 //   - Serial: human-readable OFRAW / OFSHOT text lines plus "#" banner lines.
 //
@@ -9,6 +11,10 @@
 
 export const BINARY_FRAME_LEN = 29;
 export const BINARY_LIVE_V2_FRAME_LEN = 20;
+export const BINARY_LIVE_V2_GYRO_FRAME_LEN = 26;
+// v2 live frame type carrying the real gyro; type 2 is already the 29-byte shot
+// event, so the live+gyro variant deliberately uses the next free type.
+export const LIVE_V2_GYRO_TYPE = 8;
 export const GYRO_Q4 = 16; // BLE gyro is deg/s in Q4 fixed point (LSB = 1/16 dps)
 export const ANGLE_CDEG = 100; // binary-frame angles are centi-degrees
 export const ACCEL_I8_MG = 100; // v2 live accel is signed deci-g
@@ -93,17 +99,23 @@ export function parseBinaryFrame(bytes, offset = 0) {
   };
 }
 
-// Decode one 20-byte protocol-v2 live frame. Returns a Sample or null.
+// Decode one protocol-v2 live frame. Returns a Sample or null.
+// The type byte selects the length: type 1 is the 20-byte quaternion-only
+// frame (gyro stays 0 with gyroAvailable:false); type 8 is the 26-byte frame
+// whose trailing int16 triple is gx/gy/gz in Q4 dps (gyroAvailable:true).
 export function parseBinaryLiveV2Frame(bytes, offset = 0) {
-  if (bytes.length - offset < BINARY_LIVE_V2_FRAME_LEN) return null;
+  if (bytes.length - offset < 4) return null;
   if (bytes[offset] !== MAGIC_O || bytes[offset + 1] !== MAGIC_F) return null;
+  if (bytes[offset + 2] !== 2) return null;
 
-  const view = new DataView(
-    bytes.buffer,
-    bytes.byteOffset + offset,
-    BINARY_LIVE_V2_FRAME_LEN,
-  );
-  if (view.getUint8(2) !== 2 || view.getUint8(3) !== 1) return null;
+  const type = bytes[offset + 3];
+  const frameLen =
+    type === LIVE_V2_GYRO_TYPE ? BINARY_LIVE_V2_GYRO_FRAME_LEN :
+      type === 1 ? BINARY_LIVE_V2_FRAME_LEN : 0;
+  if (!frameLen || bytes.length - offset < frameLen) return null;
+
+  const hasGyro = type === LIVE_V2_GYRO_TYPE;
+  const view = new DataView(bytes.buffer, bytes.byteOffset + offset, frameLen);
 
   const quat = normalizeQuaternion({
     qw: view.getInt16(11, true) / 10000,
@@ -122,10 +134,11 @@ export function parseBinaryLiveV2Frame(bytes, offset = 0) {
     axMg: view.getInt8(8) * ACCEL_I8_MG,
     ayMg: view.getInt8(9) * ACCEL_I8_MG,
     azMg: view.getInt8(10) * ACCEL_I8_MG,
-    gxDps: 0,
-    gyDps: 0,
-    gzDps: 0,
-    gyroAvailable: false,
+    // Type 8 appends the Q4 gyro after the mic byte; type 1 has no gyro.
+    gxDps: hasGyro ? view.getInt16(20, true) / GYRO_Q4 : 0,
+    gyDps: hasGyro ? view.getInt16(22, true) / GYRO_Q4 : 0,
+    gzDps: hasGyro ? view.getInt16(24, true) / GYRO_Q4 : 0,
+    gyroAvailable: hasGyro,
     ...quat,
     rollDeg: roll,
     pitchDeg: pitch,
@@ -282,19 +295,22 @@ export function parseBinaryTraceFrame(bytes, offset = 0) {
 // Returns { kind: "sample", sample } | { kind: "shot", shot }
 //       | { kind: "count", count } | { kind: "storage", storage }
 //       | { kind: "trace", trace } | { kind: "trace-status", traceStatus }
-//       | null.
+//       | null. Sample frames report their own byteLength (20 or 26).
 export function decodeBinaryFrame(bytes, offset = 0) {
   if (bytes.length - offset < 4) return null;
   if (bytes[offset] !== MAGIC_O || bytes[offset + 1] !== MAGIC_F) return null;
   const protocol = bytes[offset + 2];
   if (protocol !== 1 && protocol !== 2) return null;
 
-  if (bytes[offset + 2] === 2 && bytes[offset + 3] === 1) {
+  // v2 live frames are dispatched before the 29-byte guard: type 8 is only 26
+  // bytes long, and both live variants carry their own length.
+  if (protocol === 2 && (bytes[offset + 3] === 1 || bytes[offset + 3] === LIVE_V2_GYRO_TYPE)) {
+    const gyro = bytes[offset + 3] === LIVE_V2_GYRO_TYPE;
     const sample = parseBinaryLiveV2Frame(bytes, offset);
     return sample && {
       kind: "sample",
       sample,
-      byteLength: BINARY_LIVE_V2_FRAME_LEN,
+      byteLength: gyro ? BINARY_LIVE_V2_GYRO_FRAME_LEN : BINARY_LIVE_V2_FRAME_LEN,
     };
   }
 

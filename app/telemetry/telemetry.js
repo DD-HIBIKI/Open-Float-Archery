@@ -19,9 +19,10 @@ import {
   scoreValue,
 } from "./score.js?v=shot-store-206";
 import {
+  isLikelyFalseTrigger,
   normalizeReleaseMode,
   releaseModeForThreshold,
-} from "./release-mode.js?v=shot-store-202";
+} from "./release-mode.js?v=gyro-frame-1";
 
 export const MAX_TRACE_POINTS = 1000;
 
@@ -145,6 +146,18 @@ function configuredReleaseMode() {
     if (Number.isFinite(threshold)) return releaseModeForThreshold(threshold);
   } catch (_) {}
   return "bow";
+}
+
+// The false-trigger filter only applies while the release gate is trainer-low,
+// so a save has to know the threshold that was active, not just the mode. A
+// missing or unparseable threshold disables the filter instead of guessing.
+function configuredThresholdG() {
+  try {
+    const settings = JSON.parse(localStorage.getItem("openfloat_settings") || "{}");
+    const threshold = Number(settings.threshold);
+    if (Number.isFinite(threshold)) return threshold;
+  } catch (_) {}
+  return null;
 }
 
 function accelTiltDeg(ax, ay, az) {
@@ -720,6 +733,9 @@ export class TelemetryStore {
         score_version: FLOAT_SCORE_VERSION,
         packet_loss_count: null
       };
+      // Stamp the save-time verdict so the history views never re-derive it from
+      // a threshold that has since changed.
+      shotRecord.false_trigger = isLikelyFalseTrigger(shotRecord, configuredThresholdG());
 
       await saveCapture(shotRecord);
     } catch (error) {

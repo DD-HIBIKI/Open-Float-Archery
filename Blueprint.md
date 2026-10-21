@@ -33,8 +33,8 @@ hardware** (Seeed XIAO nRF54L15 Sense, IMU `lsm6ds3tr_c`):
 - Two telemetry transports carrying the same data:
   - **USB / Web Serial**: human-readable `OFRAW` text lines at ~11 Hz
     (every 100th output frame) plus `#` comment/banner lines and `OFSHOT` events.
-  - **BLE**: a custom GATT service notifying compact binary frames, including 20-byte live quaternion frames.
-    Live-sample frames are batched six per 120-byte notification; shot-event and
+  - **BLE**: a custom GATT service notifying compact binary frames, including 26-byte live quaternion+gyro frames.
+    Live-sample frames are batched six per 156-byte notification; shot-event and
     count-sync frames are sent as standalone notifications.
 - Browser dashboard: `index.html` connects over Web Bluetooth (BLE) from the
   header status badge. (The serial `OFRAW` decoder and demo adapter remain in
@@ -304,33 +304,42 @@ The browser converts fixed-point values into physical units using scale factors 
 
 ### Implemented v2 Live Frame
 
-The CRC-footed packet above is the longer-term target. The current firmware
-   ships a compact **20-byte** live frame carrying 8-bit accel, on-board
-   quaternions, and a raw audio envelope. Live-sample frames (type 1) are batched
-   six per BLE notification (a **120-byte payload**); text serial emits `OFRAW`
-   lines instead:
+The CRC-footed packet above is the longer-term target. The firmware ships
+compact live frames carrying 8-bit accel, on-board quaternions, a raw audio
+envelope, and — in the current gyro build — the raw angular rate. The type byte
+selects the layout, and live frames are batched six per BLE notification; text
+serial emits `OFRAW` lines instead.
+
+**Type 8 — 26-byte live frame with gyro** (current firmware):
 
 ```text
 offset 0  magic[2]      "OF"
 offset 2  proto u8       2
-offset 3  type u8        1 (live raw sample)
+offset 3  type u8        8 (live raw sample with gyro)
 offset 4  sequence u16   little-endian, wraps at 65536
 offset 6  dt_us u16      group window (~900 us = SAMPLES_PER_OUTPUT / ODR)
 offset 8  accel_deci_g int8[3] signed deci-g, scale 0.1 g/LSB
 offset 11 quat int16[4]        quaternion (qw, qx, qy, qz) scaled by 10000 (LSB = 1/10000)
 offset 19 mic_amp u8           noise-gated peak envelope, scale 1/3.0f (0..255)
+offset 20 gyro_dps_q4 int16[3] gx, gy, gz in Q4 deg/s (LSB = 1/16 dps)
 ```
 
-Each type-1 frame is the average of `SAMPLES_PER_OUTPUT` (3) raw IMU samples, so
-`dt_us` is the fixed group window rather than a per-sample delta. There is **no
-CRC, no flags field, and no gyro vector** in the frame; sequence is `u16`, not
-`u32`. Browser scoring derives angular-rate magnitude from successive
-quaternions when gyro data is absent.
+**Type 1 — 20-byte live frame without gyro** (older firmware): identical through
+offset 19, nothing after it.
 
-The legacy 29-byte live-frame decoder remains in the browser and Python client
-for older firmware, but shipped BLE live telemetry uses the 20-byte v2 frame.
-The 29-byte envelope still carries other frame types, demultiplexed by the type
-byte (see section 8): **type 2** live shot events and **type 3** count sync use
+Each live frame is the average of `SAMPLES_PER_OUTPUT` (3) raw IMU samples, so
+`dt_us` is the fixed group window rather than a per-sample delta. There is **no
+CRC and no flags field**; sequence is `u16`, not `u32`. The gyro variant exists
+because differentiating the quaternion left a **~12.7 deg/s** rotation-rate
+floor, while the raw rate has a ~0.07 deg/s LSB — that is what makes a
+stationary-bias estimate (and therefore yaw calibration) possible. Six 26-byte
+frames make a **156-byte notification**, still inside the 212-byte L2CAP TX MTU,
+with an unchanged packet rate.
+
+The gyro variant uses **type 8** rather than type 2 because type 2 is already the
+live shot event. The 29-byte envelope still carries the metadata frame types,
+demultiplexed by the type byte (see section 8): **type 2** live shot events and
+**type 3** count sync use
 protocol 2, with the low count/ID halves at offsets 4/6 and the high ID/count
 halves at 22/24. Motion and orientation fields remain at offsets 8-21, and
 release sequence stays at 26 for Type 2. **Type 4** stored-shot uploads retain
@@ -669,7 +678,7 @@ Command Characteristic
 
 ```text
 Service          8f3f3b10-0f5a-4f4c-9a2d-000000000001 (Custom OpenFloat Service)
-Live             8f3f3b10-0f5a-4f4c-9a2d-000000000002  notify  (20-byte live frames, 29-byte non-live frames, typed)
+Live             8f3f3b10-0f5a-4f4c-9a2d-000000000002  notify  (26-byte live frames, 29-byte non-live frames, typed)
 Control          8f3f3b10-0f5a-4f4c-9a2d-000000000003  write   (ASCII commands)
 Battery Service  0000180f-0000-1000-8000-00805f9b34fb (Standard BLE BAS)
   Level Char     00002a19-0000-1000-8000-00805f9b34fb  read/notify (0-100%)
@@ -684,8 +693,9 @@ CI runs this check before uploading the image. The UUID values above are
 unchanged; compiled-byte checks do not prove radio discovery on hardware.
 
 The live characteristic carries typed binary frames, demultiplexed by the
-type byte: type 1 live sample (batched 6/notification), type 2 shot event (sent
-on each detected shot), type 3 count sync (sent on subscribe so the persisted
+type byte: type 1 legacy live sample and type 8 live sample with gyro (both
+batched 6/notification), type 2 shot event (sent on each detected shot), type 3
+count sync (sent on subscribe so the persisted
 lifetime count displays immediately without logging a shot), type 4 stored
 shot upload (sent one at a time until the web app acknowledges each save), type 5
 storage status (sent on connect/request to sync queue counts), and type 6 trace

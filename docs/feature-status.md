@@ -101,10 +101,12 @@ architecture, design intent, and forward-looking targets, see
 - The default firmware config is battery-safe and disables the USB UART console
   so the XIAO nRF54L15 can boot from Li-ion battery power. For USB bench logs,
   build with the `firmware/prj_uart.conf` overlay.
-- BLE notifications batch six 20-byte live frames (8-bit accel, on-board
-  quaternions, and a microphone peak-envelope byte) into 120-byte notifications.
-  Non-live shot, count-sync, storage-status, stored-shot, and trace-chunk frames
-  keep the 29-byte envelope.
+- BLE notifications batch six 26-byte live frames (8-bit accel, on-board
+  quaternions, a microphone peak-envelope byte, and the raw Q4 gyro rate) into
+  156-byte notifications. The browser reads both this type-8 layout and the
+  legacy 20-byte type-1 layout, and switches its rotation-rate metric to the raw
+  gyro when it is present. Non-live shot, count-sync, storage-status,
+  stored-shot, and trace-chunk frames keep the 29-byte envelope.
 - **On-Chip Microphone Envelope**: The XIAO Sense PDM microphone runs at 16 kHz
   in a dedicated audio thread. Audio is read in **14-sample blocks** (~1143
   envelope updates/s), aligned with the ~1110 Hz IMU/BLE stream. A

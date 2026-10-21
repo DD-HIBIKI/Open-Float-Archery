@@ -29,8 +29,15 @@ NUS_TX_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 
 FRAME_SIZE = 29
 LIVE_V2_FRAME_SIZE = 20
+LIVE_V2_TYPE = 1
+LIVE_V2_GYRO_FRAME_SIZE = 26
+# Type 2 is already the 29-byte shot event, so the v2 live frame that carries
+# the real gyro uses type 8 instead.
+LIVE_V2_GYRO_TYPE = 8
 FRAME_STRUCT = struct.Struct("<2sBBHHhhhhhhhhhhB")
 LIVE_V2_STRUCT = struct.Struct("<2sBBHHbbbhhhhB")
+# The type-8 frame is the 20-byte type-1 layout plus the Q4 gx/gy/gz triple.
+LIVE_V2_GYRO_STRUCT = struct.Struct("<2sBBHHbbbhhhhBhhh")
 MAX_TEXT_LINE_BYTES = 4096
 
 
@@ -153,8 +160,10 @@ def binary_frame_len(buf: bytes | bytearray) -> Optional[int]:
         return None
     protocol = buf[2]
     frame_type = buf[3]
-    if protocol == 2 and frame_type == 1:
+    if protocol == 2 and frame_type == LIVE_V2_TYPE:
         return LIVE_V2_FRAME_SIZE
+    if protocol == 2 and frame_type == LIVE_V2_GYRO_TYPE:
+        return LIVE_V2_GYRO_FRAME_SIZE
     if (protocol == 1 and frame_type in (1, 2, 3, 4, 5, 6, 7)) or (
         protocol == 2 and frame_type in (2, 3, 5, 6, 7)
     ):
@@ -166,7 +175,7 @@ def parse_binary_frame(frame: bytes) -> Optional[Sample]:
     if frame[:2] != b"OF":
         return None
 
-    if len(frame) == LIVE_V2_FRAME_SIZE and frame[2] == 2 and frame[3] == 1:
+    if len(frame) == LIVE_V2_FRAME_SIZE and frame[2] == 2 and frame[3] == LIVE_V2_TYPE:
         (
             _magic,
             protocol,
@@ -194,6 +203,50 @@ def parse_binary_frame(frame: bytes) -> Optional[Sample]:
             gx_dps=0.0,
             gy_dps=0.0,
             gz_dps=0.0,
+            qw=qw_q10k / 10000.0,
+            qx=qx_q10k / 10000.0,
+            qy=qy_q10k / 10000.0,
+            qz=qz_q10k / 10000.0,
+            flags=0,
+            checksum_ok=True,
+            mic_amp=mic_raw,
+        )
+
+    if (
+        len(frame) == LIVE_V2_GYRO_FRAME_SIZE
+        and frame[2] == 2
+        and frame[3] == LIVE_V2_GYRO_TYPE
+    ):
+        (
+            _magic,
+            protocol,
+            frame_type,
+            sequence_u16,
+            dt_us,
+            ax_deci_g,
+            ay_deci_g,
+            az_deci_g,
+            qw_q10k,
+            qx_q10k,
+            qy_q10k,
+            qz_q10k,
+            mic_raw,
+            gx_q4,
+            gy_q4,
+            gz_q4,
+        ) = LIVE_V2_GYRO_STRUCT.unpack(frame)
+        return Sample(
+            protocol=protocol,
+            frame_type=frame_type,
+            sequence=sequence_u16,
+            uptime_us=None,
+            dt_us=dt_us,
+            ax_mg=ax_deci_g * 100,
+            ay_mg=ay_deci_g * 100,
+            az_mg=az_deci_g * 100,
+            gx_dps=gx_q4 / 16.0,
+            gy_dps=gy_q4 / 16.0,
+            gz_dps=gz_q4 / 16.0,
             qw=qw_q10k / 10000.0,
             qx=qx_q10k / 10000.0,
             qy=qy_q10k / 10000.0,

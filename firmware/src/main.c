@@ -275,7 +275,20 @@ static void stop_pdm(void)
 #define SERIAL_PRINT_DIVIDER 100
 #define BLE_NOTIFY_DIVIDER 1
 #define OPENFLOAT_BLE_FRAME_SIZE 29
-#define OPENFLOAT_BLE_LIVE_FRAME_SIZE 20
+/*
+ * Live frames now carry the raw three-axis gyro, so they grew from 20 to 26
+ * bytes. They still batch six per notification: 6 x 26 = 156 bytes fits the
+ * 212-byte L2CAP TX MTU (209 usable with the 3-byte ATT header), and the
+ * packet rate is unchanged because frames-per-notification did not move.
+ */
+#define OPENFLOAT_BLE_LIVE_FRAME_SIZE 26
+/*
+ * The live frame type byte selects the payload layout. Type 1 is the legacy
+ * 20-byte live sample without gyro; type 8 is the 26-byte live sample with
+ * gyro. The gyro variant needs a type of its own because type 2 is already
+ * the 29-byte live shot event in build_openfloat_shot_binary().
+ */
+#define OPENFLOAT_BLE_LIVE_TYPE_WITH_GYRO 8
 #define OPENFLOAT_BLE_FRAMES_PER_NOTIFICATION 6
 #define OPENFLOAT_BLE_NOTIFY_PAYLOAD_SIZE \
 	(OPENFLOAT_BLE_LIVE_FRAME_SIZE * OPENFLOAT_BLE_FRAMES_PER_NOTIFICATION)
@@ -2094,10 +2107,24 @@ static void uart_write_bytes(const uint8_t *data, size_t len)
 	}
 }
 
+/*
+ * Build one 26-byte live frame (type 8). Layout matches
+ * parseBinaryLiveV2Frame() in app/protocol/frame.js:
+ *   0..1   'O' 'F'
+ *   2      protocol version (2)
+ *   3      type (8 = live sample with gyro)
+ *   4..5   sequence u16 LE
+ *   6..7   dt_us u16 LE
+ *   8..10  accel int8 x3 (deci-g)
+ *   11..18 quaternion int16 x4 LE (Q10k)
+ *   19     microphone envelope u8
+ *   20..25 gyro int16 x3 LE (Q4, 1/16 deg/s)
+ */
 static void build_openfloat_live_binary(uint8_t frame[OPENFLOAT_BLE_LIVE_FRAME_SIZE],
 					uint32_t sequence,
 					uint32_t dt_us,
 					const struct vec3 *accel,
+					const struct vec3 *gyro,
 					const struct quat *q,
 					uint16_t flags)
 {
@@ -2107,7 +2134,7 @@ static void build_openfloat_live_binary(uint8_t frame[OPENFLOAT_BLE_LIVE_FRAME_S
 	frame[0] = 'O';
 	frame[1] = 'F';
 	frame[2] = 2; /* protocol version */
-	frame[3] = 1; /* live raw sample */
+	frame[3] = OPENFLOAT_BLE_LIVE_TYPE_WITH_GYRO;
 	put_u16_le(frame, 4, (uint16_t)sequence);
 	put_u16_le(frame, 6, (uint16_t)dt_us);
 	frame[8] = (uint8_t)clamp_i8(scale_float(accel->x, SCALE_ACCEL_DECI_G));
@@ -2126,6 +2153,13 @@ static void build_openfloat_live_binary(uint8_t frame[OPENFLOAT_BLE_LIVE_FRAME_S
 		val_raw = 255;
 	}
 	frame[19] = (uint8_t)val_raw;
+
+	/* Raw angular rate in Q4 deg/s. The browser prefers this over
+	 * differentiating the quaternion, which had a ~12.7 deg/s noise floor.
+	 */
+	put_u16_le(frame, 20, (uint16_t)clamp_i16(scale_float(gyro->x, SCALE_GYRO_DPS_Q4)));
+	put_u16_le(frame, 22, (uint16_t)clamp_i16(scale_float(gyro->y, SCALE_GYRO_DPS_Q4)));
+	put_u16_le(frame, 24, (uint16_t)clamp_i16(scale_float(gyro->z, SCALE_GYRO_DPS_Q4)));
 }
 
 /*
@@ -2210,12 +2244,13 @@ static void build_openfloat_trace_status_binary(
 static void __maybe_unused write_openfloat_live_binary(uint32_t sequence,
 						       uint32_t dt_us,
 						       const struct vec3 *accel,
+						       const struct vec3 *gyro,
 						       const struct quat *q,
 						       uint16_t flags)
 {
 	uint8_t frame[OPENFLOAT_BLE_LIVE_FRAME_SIZE];
 
-	build_openfloat_live_binary(frame, sequence, dt_us, accel, q, flags);
+	build_openfloat_live_binary(frame, sequence, dt_us, accel, gyro, q, flags);
 	uart_write_bytes(frame, sizeof(frame));
 }
 
@@ -2925,7 +2960,7 @@ int main(void)
 	printk("# ui: user LED status, user button calibration\n");
 	printk("# ble: %s, batch %d averaged frames per notification\n",
 	       CONFIG_BT_DEVICE_NAME, OPENFLOAT_BLE_FRAMES_PER_NOTIFICATION);
-	printk("# BLE live frame: %d bytes each, batched payload %d bytes, magic[2]='OF', proto u8, type u8, seq u16, dt_us u16, accel_deci_g int8[3], quat_q10k int16[4], mic u8\n",
+	printk("# BLE live frame: %d bytes each, batched payload %d bytes, magic[2]='OF', proto u8, type u8(8), seq u16, dt_us u16, accel_deci_g int8[3], quat_q10k int16[4], mic u8, gyro_dps_q4 int16[3]\n",
 	       OPENFLOAT_BLE_LIVE_FRAME_SIZE,
 	       OPENFLOAT_BLE_NOTIFY_PAYLOAD_SIZE);
 	printk("# format: OFSHOT,proto,shot_id,uptime_us,ax_mg,ay_mg,az_mg,shot_count\n");
@@ -3243,7 +3278,7 @@ int main(void)
 				build_openfloat_live_binary(
 					&ble_payload[offset],
 					telemetry_sequence, OUTPUT_DT_US * ble_stream_divider,
-					&avg_accel, &q, flags);
+					&avg_accel, &avg_gyro, &q, flags);
 				ble_payload_frames++;
 				if (ble_payload_frames >=
 				    OPENFLOAT_BLE_FRAMES_PER_NOTIFICATION) {

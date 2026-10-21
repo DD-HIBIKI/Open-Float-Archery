@@ -474,6 +474,10 @@
                   <input type="checkbox" id="historyHideTrainerToggle">
                   Hide trainer captures
                 </label>
+                <label class="history-filter-toggle" title="Hide trainer-mode captures whose impact was too large to be a real shot">
+                  <input type="checkbox" id="historyHideFalseTriggerToggle" checked>
+                  Hide suspected false triggers
+                </label>
                 <button id="historySelectModeBtn" class="secondary mini-btn" type="button">Select Shots</button>
               </div>
               <p id="historyExportStatus" class="note history-export-status" role="status"></p>
@@ -939,7 +943,7 @@
     })();
   </script>
 
-  <script type="module" src="app/i18n.js?v=zh-6"></script>
-  <script type="module" src="app/main.js?v=shot-store-206"></script>
+  <script type="module" src="app/i18n.js?v=zh-7"></script>
+  <script type="module" src="app/main.js?v=gyro-frame-1"></script>
 </body>
 </html>

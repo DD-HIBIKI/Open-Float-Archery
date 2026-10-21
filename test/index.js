@@ -5,6 +5,7 @@ import "./backup.test.js";
 import "./backup-ui.test.js";
 import "./download.test.js";
 import "./frame.test.js";
+import "./false-trigger.test.js";
 import "./ble-trace.test.js";
 import "./connection.test.js";
 import "./browser-support.test.js";

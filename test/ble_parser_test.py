@@ -2,6 +2,7 @@
 
 import contextlib
 import io
+import math
 import sys
 import unittest
 from pathlib import Path
@@ -9,10 +10,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from openfloat_ble_client import (
     FRAME_STRUCT,
+    LIVE_V2_FRAME_SIZE,
+    LIVE_V2_GYRO_FRAME_SIZE,
+    LIVE_V2_GYRO_STRUCT,
+    LIVE_V2_GYRO_TYPE,
     LIVE_V2_STRUCT,
     MAX_TEXT_LINE_BYTES,
     OpenFloatParser,
     Sample,
+    binary_frame_len,
+    parse_binary_frame,
 )
 
 
@@ -23,6 +30,11 @@ LEGACY = FRAME_STRUCT.pack(
 LIVE = LIVE_V2_STRUCT.pack(
     b"OF", 2, 1, 42, 901, -12, 3, 16, 10000, -800, 600, -400, 127,
 )
+# 26-byte type-8 live frame: the 20-byte layout plus the Q4 gx/gy/gz triple.
+LIVE_GYRO = LIVE_V2_GYRO_STRUCT.pack(
+    b"OF", 2, LIVE_V2_GYRO_TYPE, 43, 902, -12, 3, 16, 10000, -800, 600, -400, 127,
+    -160, 400, -1200,
+)
 EXPECTED_LEGACY = Sample(
     1, 1, 65535, None, 2573, -1200, 250, 16000,
     -12.0, 25.0, -37.5, 1.0, -0.08, 0.06, -0.04, 0, True, 35,
@@ -31,12 +43,20 @@ EXPECTED_LIVE = Sample(
     2, 1, 42, None, 901, -1200, 300, 1600,
     0.0, 0.0, 0.0, 1.0, -0.08, 0.06, -0.04, 0, True, 127,
 )
+EXPECTED_LIVE_GYRO = Sample(
+    2, LIVE_V2_GYRO_TYPE, 43, None, 902, -1200, 300, 1600,
+    -10.0, 25.0, -75.0, 1.0, -0.08, 0.06, -0.04, 0, True, 127,
+)
 TEXT = b"OFRAW,1,7,1000,901,-100,250,16000,-16000,32000,-8000,0,0,0,1000000,0,0,0,70000\r\n"
 EXPECTED_TEXT = Sample(
     1, 1, 7, 1000, 901, -100, 250, 16000,
     -16.0, 32.0, -8.0, 1.0, 0.0, 0.0, 0.0, 0, True, 0, 70000,
 )
-FRAMES = ((LEGACY, EXPECTED_LEGACY), (LIVE, EXPECTED_LIVE))
+FRAMES = (
+    (LEGACY, EXPECTED_LEGACY),
+    (LIVE, EXPECTED_LIVE),
+    (LIVE_GYRO, EXPECTED_LIVE_GYRO),
+)
 
 
 def decode_chunks(chunks):
@@ -64,6 +84,36 @@ class BleParserTests(unittest.TestCase):
                         self.assertEqual(decode_chunks((
                             frame[:first], b"", frame[first:second], frame[second:],
                         )), ([expected], ""))
+
+    def test_gyro_live_frame_decodes_q4_rotation_rate(self):
+        self.assertEqual(binary_frame_len(LIVE), LIVE_V2_FRAME_SIZE)
+        self.assertEqual(binary_frame_len(LIVE_GYRO), LIVE_V2_GYRO_FRAME_SIZE)
+        self.assertEqual(len(LIVE_GYRO), LIVE_V2_GYRO_FRAME_SIZE)
+
+        sample = parse_binary_frame(LIVE_GYRO)
+        self.assertIsNotNone(sample)
+        self.assertEqual(sample.frame_type, LIVE_V2_GYRO_TYPE)
+        self.assertEqual(sample.protocol, 2)
+        self.assertEqual((sample.gx_dps, sample.gy_dps, sample.gz_dps), (-10.0, 25.0, -75.0))
+        self.assertAlmostEqual(sample.gyro_dps, math.sqrt(10.0 ** 2 + 25.0 ** 2 + 75.0 ** 2))
+        self.assertEqual((sample.ax_mg, sample.ay_mg, sample.az_mg), (-1200, 300, 1600))
+        self.assertEqual(sample.mic_amp, 127)
+
+        # The 20-byte type-1 frame keeps its quaternion-only (no gyro) semantics.
+        plain = parse_binary_frame(LIVE)
+        self.assertEqual((plain.gx_dps, plain.gy_dps, plain.gz_dps), (0.0, 0.0, 0.0))
+
+    def test_gyro_frames_are_samples_never_shot_events(self):
+        data = LIVE_GYRO * 6
+        self.assertEqual(len(data), 156)
+        self.assertEqual(decode_chunks((data,)), ([EXPECTED_LIVE_GYRO] * 6, ""))
+        for size in (1, 7, 26, 52, 100, len(data)):
+            with self.subTest(size=size):
+                self.assertEqual(decode_chunks(
+                    data[index:index + size] for index in range(0, len(data), size)
+                ), ([EXPECTED_LIVE_GYRO] * 6, ""))
+        # A short type-8 frame stays buffered instead of resyncing as a shot event.
+        self.assertEqual(decode_chunks((LIVE_GYRO[:25],)), ([], ""))
 
     def test_printable_binary_payload_stays_binary(self):
         frame = b"OF\x01\x01" + b"X" * 25
