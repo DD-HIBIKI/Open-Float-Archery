@@ -4,6 +4,10 @@ name: OTA spike
 # image with the mcumgr/SMP-over-BLE server enabled, and show which DFU
 # artifacts the build produces. Nothing is flashed by this workflow.
 on:
+  # workflow_dispatch needs the file on the default branch, so this throwaway
+  # workflow is triggered by pushes to its own spike branch instead.
+  push:
+    branches: [ota-spike]
   workflow_dispatch:
 
 jobs:
