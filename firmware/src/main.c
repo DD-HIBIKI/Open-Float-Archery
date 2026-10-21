@@ -1034,8 +1034,10 @@ static int prepare_imu_for_sleep(void)
 	 */
 	uint8_t wake_src;
 
-	err = i2c_reg_read_byte_dt(&imu_i2c, 0x1B, &wake_src);
-	if (err) return err;
+	/* Reading WAKE_UP_SRC clears a latched wake event. Do not let a failed read
+	 * fail the whole sleep preparation: the caller reboots on error.
+	 */
+	(void)i2c_reg_read_byte_dt(&imu_i2c, 0x1B, &wake_src);
 
 	return 0;
 }
@@ -1125,26 +1127,26 @@ static enum sleep_attempt enter_deep_sleep(void)
 		/* Disable the active handler so the ISR does not fire during sleep. */
 		(void)gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_DISABLE);
 
-		uint32_t wake_pin = IMU_INT_ABS_PIN;
-		NRF_GPIO_Type *wake_port = nrf_gpio_pin_port_decode(&wake_pin);
-		/* Wake on the edge *away* from the pin's idle level. Deriving the
-		 * polarity from the measured level keeps this correct even though the
-		 * devicetree's active-low declaration and the IMU's INT1 polarity do
-		 * not agree: guessing the wrong sense level wakes the SoC the moment
-		 * System OFF latches it, which looked like a reboot loop.
+		/* Let INT1 settle after the IMU reconfiguration, then arm SENSE on the
+		 * level the pin is *not* at (Nordic's system_off sample pattern). The
+		 * line can still transition just after arming, and arming the level it
+		 * already sits at wakes the SoC the instant System OFF latches it,
+		 * which shows up as a reboot loop whose period equals the idle timeout.
 		 */
-		int idle_high = gpio_pin_get_raw(imu_int.port, imu_int.pin) > 0;
-		nrf_gpio_pin_sense_t sense =
-			idle_high ? NRF_GPIO_PIN_SENSE_LOW : NRF_GPIO_PIN_SENSE_HIGH;
+		for (int attempt = 0; attempt < 8; attempt++) {
+			int idle_high;
 
-#if NRF_GPIO_HAS_DETECT_MODE
-		nrf_gpio_port_detect_latch_set(wake_port, true);
-#else
-		(void)wake_port;
-#endif
-		nrf_gpio_cfg_sense_input(IMU_INT_ABS_PIN, NRF_GPIO_PIN_NOPULL, sense);
-		printk("# Wake armed: pin %d idle=%d sense=%d\n", IMU_INT_ABS_PIN,
-		       idle_high, idle_high ? 1 : 0);
+			k_sleep(K_MSEC(20));
+			idle_high = gpio_pin_get_raw(imu_int.port, imu_int.pin) > 0;
+			nrf_gpio_cfg_sense_input(IMU_INT_ABS_PIN, NRF_GPIO_PIN_NOPULL,
+						 idle_high ? NRF_GPIO_PIN_SENSE_LOW
+							   : NRF_GPIO_PIN_SENSE_HIGH);
+			k_sleep(K_MSEC(5));
+			if ((gpio_pin_get_raw(imu_int.port, imu_int.pin) > 0) == idle_high) {
+				break;
+			}
+		}
+		printk("# Wake armed on pin %d\n", IMU_INT_ABS_PIN);
 	}
 
 	printk("# Powering down System OFF now. Wake up on movement/shot.\n");
