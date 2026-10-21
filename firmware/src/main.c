@@ -399,6 +399,16 @@ static const struct gpio_dt_spec imu_int =
 #define IMU_INT_PORT_NUM DT_PROP(DT_GPIO_CTLR(DT_ALIAS(imu0), irq_gpios), port)
 #define IMU_INT_ABS_PIN \
 	NRF_GPIO_PIN_MAP(IMU_INT_PORT_NUM, DT_GPIO_PIN(DT_ALIAS(imu0), irq_gpios))
+/*
+ * INT1 on this board is declared active-low in devicetree, so the pin idles
+ * high. Arming System OFF with the wrong SENSE level wakes the SoC immediately
+ * and turns the sleep timeout into a reboot loop.
+ */
+#if (DT_GPIO_FLAGS(DT_ALIAS(imu0), irq_gpios) & GPIO_ACTIVE_LOW)
+#define IMU_INT_SENSE NRF_GPIO_PIN_SENSE_LOW
+#else
+#define IMU_INT_SENSE NRF_GPIO_PIN_SENSE_HIGH
+#endif
 #endif
 static struct gpio_callback imu_int_cb;
 static K_SEM_DEFINE(imu_fifo_sem, 0, 1);
@@ -1023,6 +1033,14 @@ static int prepare_imu_for_sleep(void)
 	err = i2c_reg_write_byte_dt(&imu_i2c, 0x5E, 0x20);
 	if (err) return err;
 
+	/* 8. Drop any wake event latched while the FIFO was still draining, so INT1
+	 * is idle when System OFF arms its sense on that pin.
+	 */
+	uint8_t wake_src;
+
+	err = i2c_reg_read_byte_dt(&imu_i2c, 0x1B, &wake_src);
+	if (err) return err;
+
 	return 0;
 }
 
@@ -1120,7 +1138,7 @@ static enum sleep_attempt enter_deep_sleep(void)
 		(void)wake_port;
 #endif
 		nrf_gpio_cfg_sense_input(IMU_INT_ABS_PIN, NRF_GPIO_PIN_NOPULL,
-					 NRF_GPIO_PIN_SENSE_HIGH);
+					 IMU_INT_SENSE);
 		printk("# Wake source armed: pin %d, sense high\n", IMU_INT_ABS_PIN);
 	}
 
