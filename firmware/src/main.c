@@ -399,16 +399,6 @@ static const struct gpio_dt_spec imu_int =
 #define IMU_INT_PORT_NUM DT_PROP(DT_GPIO_CTLR(DT_ALIAS(imu0), irq_gpios), port)
 #define IMU_INT_ABS_PIN \
 	NRF_GPIO_PIN_MAP(IMU_INT_PORT_NUM, DT_GPIO_PIN(DT_ALIAS(imu0), irq_gpios))
-/*
- * INT1 on this board is declared active-low in devicetree, so the pin idles
- * high. Arming System OFF with the wrong SENSE level wakes the SoC immediately
- * and turns the sleep timeout into a reboot loop.
- */
-#if (DT_GPIO_FLAGS(DT_ALIAS(imu0), irq_gpios) & GPIO_ACTIVE_LOW)
-#define IMU_INT_SENSE NRF_GPIO_PIN_SENSE_LOW
-#else
-#define IMU_INT_SENSE NRF_GPIO_PIN_SENSE_HIGH
-#endif
 #endif
 static struct gpio_callback imu_int_cb;
 static K_SEM_DEFINE(imu_fifo_sem, 0, 1);
@@ -1131,15 +1121,24 @@ static enum sleep_attempt enter_deep_sleep(void)
 
 		uint32_t wake_pin = IMU_INT_ABS_PIN;
 		NRF_GPIO_Type *wake_port = nrf_gpio_pin_port_decode(&wake_pin);
+		/* Wake on the edge *away* from the pin's idle level. Deriving the
+		 * polarity from the measured level keeps this correct even though the
+		 * devicetree's active-low declaration and the IMU's INT1 polarity do
+		 * not agree: guessing the wrong sense level wakes the SoC the moment
+		 * System OFF latches it, which looked like a reboot loop.
+		 */
+		int idle_high = gpio_pin_get_raw(imu_int.port, imu_int.pin) > 0;
+		nrf_gpio_pin_sense_t sense =
+			idle_high ? NRF_GPIO_PIN_SENSE_LOW : NRF_GPIO_PIN_SENSE_HIGH;
 
 #if NRF_GPIO_HAS_DETECT_MODE
 		nrf_gpio_port_detect_latch_set(wake_port, true);
 #else
 		(void)wake_port;
 #endif
-		nrf_gpio_cfg_sense_input(IMU_INT_ABS_PIN, NRF_GPIO_PIN_NOPULL,
-					 IMU_INT_SENSE);
-		printk("# Wake source armed: pin %d, sense high\n", IMU_INT_ABS_PIN);
+		nrf_gpio_cfg_sense_input(IMU_INT_ABS_PIN, NRF_GPIO_PIN_NOPULL, sense);
+		printk("# Wake armed: pin %d idle=%d sense=%d\n", IMU_INT_ABS_PIN,
+		       idle_high, idle_high ? 1 : 0);
 	}
 
 	printk("# Powering down System OFF now. Wake up on movement/shot.\n");
