@@ -1,0 +1,58 @@
+name: OTA spike
+
+# Throwaway workflow: prove that this application builds as an MCUboot sysbuild
+# image with the mcumgr/SMP-over-BLE server enabled, and show which DFU
+# artifacts the build produces. Nothing is flashed by this workflow.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: MCUboot + mcumgr spike (xiao_nrf54l15, NCS v3.3.0)
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/nrfconnect/sdk-nrf-toolchain:v3.3.0
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: openfloat
+
+      - name: Initialize NCS v3.3.0 workspace
+        run: |
+          west init -m https://github.com/nrfconnect/sdk-nrf --mr v3.3.0 ncs
+          cd ncs
+          west update -o=--depth=1 -n
+
+      - name: Build application + MCUboot (sysbuild)
+        working-directory: ncs
+        run: |
+          west build -p always -b xiao_nrf54l15/nrf54l15/cpuapp \
+            -d "$GITHUB_WORKSPACE/openfloat/firmware/build-ci" \
+            "$GITHUB_WORKSPACE/openfloat/firmware"
+
+      - name: Show partition layout and OTA artifacts
+        run: |
+          cd openfloat/firmware/build-ci
+          echo "=== top level ==="
+          ls -la
+          echo "=== images ==="
+          find . -maxdepth 3 \( -name '*.hex' -o -name '*.bin' -o -name '*.zip' \) | sort
+          echo "=== partition manager output (app) ==="
+          grep -E 'PM_PARTITION|PARTITION_SIZE|FLASH_LOAD' zephyr/.config | head -30 || true
+          echo "=== mcuboot config (key bits) ==="
+          grep -E 'MCUBOOT_MODE|BOOTLOADER_MCUBOOT|MCUMGR' zephyr/.config | head -30 || true
+          echo "=== mcuboot child image config ==="
+          test -f mcuboot/zephyr/.config && grep -E 'FLASH|RRAM|MPU_ALLOW' mcuboot/zephyr/.config | head -20 || echo "(no mcuboot child build dir)"
+
+      - name: Upload OTA artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ota-spike
+          path: |
+            openfloat/firmware/build-ci/merged.hex
+            openfloat/firmware/build-ci/dfu_application.zip
+            openfloat/firmware/build-ci/app_update.bin
+          if-no-files-found: warn
