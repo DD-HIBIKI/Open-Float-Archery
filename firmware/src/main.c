@@ -42,6 +42,7 @@
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/sys/poweroff.h>
 #include <zephyr/sys/reboot.h>
+#include <helpers/nrfx_reset_reason.h>
 #if defined(CONFIG_MCUBOOT_IMG_MANAGER)
 #include <zephyr/dfu/mcuboot.h>
 #endif
@@ -3004,6 +3005,14 @@ int main(void)
 		.z = 0.0f,
 	};
 	int err;
+
+	/* z_sys_poweroff() clears RESETREAS before powering down, so a boot that
+	 * follows a System OFF wake reports exactly what woke the SoC.
+	 */
+	uint32_t reset_reason = nrfx_reset_reason_get();
+
+	nrfx_reset_reason_clear(UINT32_MAX);
+	printk("# RESET reason: 0x%08x\n", reset_reason);
 
 	printk("# OPENFLOAT_PROTO,1\n");
 	printk("# target: Seeed XIAO nRF54L15 Sense\n");
