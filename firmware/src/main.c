@@ -1095,6 +1095,25 @@ static enum sleep_attempt enter_deep_sleep(void)
 	if (gpio_is_ready_dt(&imu_int)) {
 		/* Disable active handler to avoid firing ISR */
 		gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_DISABLE);
+
+		/* Switching the accelerometer from the streaming ODR down to the 26 Hz
+		 * wake configuration leaves one spurious wake event latched, which
+		 * drives INT1 to its active level. Arming System OFF's sense on that
+		 * level wakes the SoC immediately, so the board rebooted instead of
+		 * sleeping (the log shows "Powering down System OFF" followed straight
+		 * by a new boot banner). Clear the event and wait for INT1 to go idle
+		 * before arming the wake source.
+		 */
+		for (int attempt = 0; attempt < 25; attempt++) {
+			uint8_t wake_src;
+
+			(void)i2c_reg_read_byte_dt(&imu_i2c, 0x1B, &wake_src);
+			k_sleep(K_MSEC(20));
+			if (gpio_pin_get_dt(&imu_int) == 0) {
+				break;
+			}
+		}
+
 		/* Configure level active trigger for SENSE wakeup */
 		gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_LEVEL_ACTIVE);
 	}
