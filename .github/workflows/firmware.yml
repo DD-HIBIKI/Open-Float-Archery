@@ -57,6 +57,16 @@ jobs:
             -d "$GITHUB_WORKSPACE/openfloat/firmware/build-ci" \
             "$GITHUB_WORKSPACE/openfloat/firmware"
 
+      - name: Dump partition map
+        working-directory: openfloat
+        run: |
+          cd firmware/build-ci
+          for f in partitions.yml partition_manager_output.cmake pm.config zephyr/partitions.h; do
+            if [ -f "$f" ]; then echo "===== $f ====="; cat "$f"; fi
+          done
+          echo "===== images ====="
+          ls -l merged.hex
+
       - name: Verify MCUboot + mcumgr configuration
         working-directory: openfloat
         run: |
