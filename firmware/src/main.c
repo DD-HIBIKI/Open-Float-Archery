@@ -41,7 +41,6 @@
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/sys/poweroff.h>
-#include <hal/nrf_gpio.h>
 #include <zephyr/sys/reboot.h>
 #if defined(CONFIG_MCUBOOT_IMG_MANAGER)
 #include <zephyr/dfu/mcuboot.h>
@@ -390,16 +389,6 @@ static void stop_pdm(void)
 static const struct i2c_dt_spec imu_i2c = I2C_DT_SPEC_GET(DT_ALIAS(imu0));
 static const struct gpio_dt_spec imu_int =
 	GPIO_DT_SPEC_GET_OR(DT_ALIAS(imu0), irq_gpios, { 0 });
-/*
- * Absolute nRF pin number (port << 5 | pin) for the HAL. System OFF wake is
- * armed through PIN_CNF.SENSE, which needs this encoding rather than the
- * gpio_dt_spec's port/pin pair.
- */
-#if DT_NODE_HAS_PROP(DT_ALIAS(imu0), irq_gpios)
-#define IMU_INT_PORT_NUM DT_PROP(DT_GPIO_CTLR(DT_ALIAS(imu0), irq_gpios), port)
-#define IMU_INT_ABS_PIN \
-	NRF_GPIO_PIN_MAP(IMU_INT_PORT_NUM, DT_GPIO_PIN(DT_ALIAS(imu0), irq_gpios))
-#endif
 static struct gpio_callback imu_int_cb;
 static K_SEM_DEFINE(imu_fifo_sem, 0, 1);
 static const struct gpio_dt_spec user_led =
@@ -529,13 +518,7 @@ static K_MUTEX_DEFINE(trace_upload_mutex);
 static int buffer_rate_hz = 52;
 static int buffer_nvs_enabled = 1;
 static int ble_stream_divider = 1;
-/*
- * Automatic System OFF sleep stays off by default until the wake path is
- * verified on hardware: a wrong sense level wakes the SoC the instant it powers
- * down, which shows up as a reboot loop instead of a sleeping device. Enable it
- * with "autosleep:1" once wake-by-motion is confirmed.
- */
-static int auto_sleep_enabled = 0;
+static int auto_sleep_enabled = 1;
 static uint32_t follow_through_ms = 1500;
 
 static struct k_work_delayable trace_persist_work;
@@ -1029,16 +1012,6 @@ static int prepare_imu_for_sleep(void)
 	err = i2c_reg_write_byte_dt(&imu_i2c, 0x5E, 0x20);
 	if (err) return err;
 
-	/* 8. Drop any wake event latched while the FIFO was still draining, so INT1
-	 * is idle when System OFF arms its sense on that pin.
-	 */
-	uint8_t wake_src;
-
-	/* Reading WAKE_UP_SRC clears a latched wake event. Do not let a failed read
-	 * fail the whole sleep preparation: the caller reboots on error.
-	 */
-	(void)i2c_reg_read_byte_dt(&imu_i2c, 0x1B, &wake_src);
-
 	return 0;
 }
 
@@ -1115,38 +1088,15 @@ static enum sleep_attempt enter_deep_sleep(void)
 		sys_reboot(SYS_REBOOT_COLD);
 	}
 
-	/* 4. Arm the IMU INT pin as the System OFF wake source.
-	 *
-	 * The generic GPIO driver cannot do this here: this SoC's GPIOTE has no port
-	 * event support, so GPIO_INT_LEVEL_ACTIVE fails with -ENOTSUP. That failure
-	 * used to be ignored, which left the board with no wake source at all --
-	 * System OFF also powers the debug port down, so the only way back was the
-	 * Reset button. Program PIN_CNF.SENSE through the nRF HAL instead.
+	/* 4. Configure P0.02 GPIO interrupt as level active trigger.
+	 * In Zephyr, for nRF SoCs, level-trigger enables the GPIO SENSE high/low logic,
+	 * which is the only wake-up source active in System OFF.
 	 */
-	if (gpio_is_ready_dt(&imu_int) && DT_NODE_HAS_PROP(DT_ALIAS(imu0), irq_gpios)) {
-		/* Disable the active handler so the ISR does not fire during sleep. */
-		(void)gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_DISABLE);
-
-		/* Let INT1 settle after the IMU reconfiguration, then arm SENSE on the
-		 * level the pin is *not* at (Nordic's system_off sample pattern). The
-		 * line can still transition just after arming, and arming the level it
-		 * already sits at wakes the SoC the instant System OFF latches it,
-		 * which shows up as a reboot loop whose period equals the idle timeout.
-		 */
-		for (int attempt = 0; attempt < 8; attempt++) {
-			int idle_high;
-
-			k_sleep(K_MSEC(20));
-			idle_high = gpio_pin_get_raw(imu_int.port, imu_int.pin) > 0;
-			nrf_gpio_cfg_sense_input(IMU_INT_ABS_PIN, NRF_GPIO_PIN_NOPULL,
-						 idle_high ? NRF_GPIO_PIN_SENSE_LOW
-							   : NRF_GPIO_PIN_SENSE_HIGH);
-			k_sleep(K_MSEC(5));
-			if ((gpio_pin_get_raw(imu_int.port, imu_int.pin) > 0) == idle_high) {
-				break;
-			}
-		}
-		printk("# Wake armed on pin %d\n", IMU_INT_ABS_PIN);
+	if (gpio_is_ready_dt(&imu_int)) {
+		/* Disable active handler to avoid firing ISR */
+		gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_DISABLE);
+		/* Configure level active trigger for SENSE wakeup */
+		gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_LEVEL_ACTIVE);
 	}
 
 	printk("# Powering down System OFF now. Wake up on movement/shot.\n");
@@ -1220,16 +1170,8 @@ static int init_imu_interrupt(void)
 
 	err = gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_LEVEL_ACTIVE);
 	if (err) {
-		/* This SoC's GPIOTE has no port event, so a level trigger cannot be
-		 * installed. The FTH line still rises each time the FIFO refills, and
-		 * the handler re-arms on every drain, so an edge works the same way.
-		 */
-		printk("# Level trigger unavailable (%d); using edge trigger\n", err);
-		err = gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_EDGE_TO_ACTIVE);
-		if (err) {
-			printk("# Could not enable IMU INT: %d\n", err);
-			return err;
-		}
+		printk("# Could not enable IMU INT: %d\n", err);
+		return err;
 	}
 
 	printk("# IMU INT1 watermark on %s pin %d, FTH=%d samples\n",
@@ -2495,8 +2437,8 @@ static ssize_t handle_openfloat_control(struct bt_conn *conn,
 			return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
 		}
 	} else if (!strncmp(command, "reboot", strlen("reboot"))) {
-		/* Needed so an OTA update can finish without a debug probe: MCUboot
-		 * swaps the pending image in on the next reset. */
+		/* Lets an OTA update finish without a debug probe: MCUboot swaps the
+		 * pending image in on the next reset. */
 		printk("# BLE control: rebooting\n");
 		k_sleep(K_MSEC(100));
 		sys_reboot(SYS_REBOOT_COLD);
