@@ -41,6 +41,7 @@
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/sys/poweroff.h>
+#include <hal/nrf_gpio.h>
 #include <zephyr/sys/reboot.h>
 #if defined(CONFIG_MCUBOOT_IMG_MANAGER)
 #include <zephyr/dfu/mcuboot.h>
@@ -389,6 +390,16 @@ static void stop_pdm(void)
 static const struct i2c_dt_spec imu_i2c = I2C_DT_SPEC_GET(DT_ALIAS(imu0));
 static const struct gpio_dt_spec imu_int =
 	GPIO_DT_SPEC_GET_OR(DT_ALIAS(imu0), irq_gpios, { 0 });
+/*
+ * Absolute nRF pin number (port << 5 | pin) for the HAL. System OFF wake is
+ * armed through PIN_CNF.SENSE, which needs this encoding rather than the
+ * gpio_dt_spec's port/pin pair.
+ */
+#if DT_NODE_HAS_PROP(DT_ALIAS(imu0), irq_gpios)
+#define IMU_INT_PORT_NUM DT_PROP(DT_GPIO_CTLR(DT_ALIAS(imu0), irq_gpios), port)
+#define IMU_INT_ABS_PIN \
+	NRF_GPIO_PIN_MAP(IMU_INT_PORT_NUM, DT_GPIO_PIN(DT_ALIAS(imu0), irq_gpios))
+#endif
 static struct gpio_callback imu_int_cb;
 static K_SEM_DEFINE(imu_fifo_sem, 0, 1);
 static const struct gpio_dt_spec user_led =
@@ -1088,15 +1099,29 @@ static enum sleep_attempt enter_deep_sleep(void)
 		sys_reboot(SYS_REBOOT_COLD);
 	}
 
-	/* 4. Configure P0.02 GPIO interrupt as level active trigger.
-	 * In Zephyr, for nRF SoCs, level-trigger enables the GPIO SENSE high/low logic,
-	 * which is the only wake-up source active in System OFF.
+	/* 4. Arm the IMU INT pin as the System OFF wake source.
+	 *
+	 * The generic GPIO driver cannot do this here: this SoC's GPIOTE has no port
+	 * event support, so GPIO_INT_LEVEL_ACTIVE fails with -ENOTSUP. That failure
+	 * used to be ignored, which left the board with no wake source at all --
+	 * System OFF also powers the debug port down, so the only way back was the
+	 * Reset button. Program PIN_CNF.SENSE through the nRF HAL instead.
 	 */
-	if (gpio_is_ready_dt(&imu_int)) {
-		/* Disable active handler to avoid firing ISR */
-		gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_DISABLE);
-		/* Configure level active trigger for SENSE wakeup */
-		gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_LEVEL_ACTIVE);
+	if (gpio_is_ready_dt(&imu_int) && DT_NODE_HAS_PROP(DT_ALIAS(imu0), irq_gpios)) {
+		/* Disable the active handler so the ISR does not fire during sleep. */
+		(void)gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_DISABLE);
+
+		uint32_t wake_pin = IMU_INT_ABS_PIN;
+		NRF_GPIO_Type *wake_port = nrf_gpio_pin_port_decode(&wake_pin);
+
+#if NRF_GPIO_HAS_DETECT_MODE
+		nrf_gpio_port_detect_latch_set(wake_port, true);
+#else
+		(void)wake_port;
+#endif
+		nrf_gpio_cfg_sense_input(IMU_INT_ABS_PIN, NRF_GPIO_PIN_NOPULL,
+					 NRF_GPIO_PIN_SENSE_HIGH);
+		printk("# Wake source armed: pin %d, sense high\n", IMU_INT_ABS_PIN);
 	}
 
 	printk("# Powering down System OFF now. Wake up on movement/shot.\n");
@@ -1170,8 +1195,16 @@ static int init_imu_interrupt(void)
 
 	err = gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_LEVEL_ACTIVE);
 	if (err) {
-		printk("# Could not enable IMU INT: %d\n", err);
-		return err;
+		/* This SoC's GPIOTE has no port event, so a level trigger cannot be
+		 * installed. The FTH line still rises each time the FIFO refills, and
+		 * the handler re-arms on every drain, so an edge works the same way.
+		 */
+		printk("# Level trigger unavailable (%d); using edge trigger\n", err);
+		err = gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_EDGE_TO_ACTIVE);
+		if (err) {
+			printk("# Could not enable IMU INT: %d\n", err);
+			return err;
+		}
 	}
 
 	printk("# IMU INT1 watermark on %s pin %d, FTH=%d samples\n",

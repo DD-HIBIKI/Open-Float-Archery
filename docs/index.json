@@ -10,6 +10,12 @@
           "name": "BLE Control Commands",
           "id": "reference/ble-commands",
           "path": "docs/reference/ble-commands.md"
+        },
+        {
+          "type": "file",
+          "name": "BLE \u63a7\u5236\u547d\u4ee4",
+          "id": "reference/ble-commands.zh",
+          "path": "docs/reference/ble-commands.zh.md"
         }
       ]
     },
@@ -21,9 +27,21 @@
     },
     {
       "type": "file",
+      "name": "OpenFloat \u5c04\u7bad\u9065\u6d4b\u7cfb\u7edf \u00b7 \u4f7f\u7528\u624b\u518c",
+      "id": "manual.zh",
+      "path": "docs/manual.zh.md"
+    },
+    {
+      "type": "file",
       "name": "Quick Start",
       "id": "quick-start",
       "path": "docs/quick-start.md"
+    },
+    {
+      "type": "file",
+      "name": "\u5feb\u901f\u4e0a\u624b",
+      "id": "quick-start.zh",
+      "path": "docs/quick-start.zh.md"
     }
   ]
 }
