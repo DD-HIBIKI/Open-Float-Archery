@@ -1104,11 +1104,13 @@ static enum sleep_attempt enter_deep_sleep(void)
 		 * by a new boot banner). Clear the event and wait for INT1 to go idle
 		 * before arming the wake source.
 		 */
-		for (int attempt = 0; attempt < 25; attempt++) {
-			uint8_t wake_src;
+		for (int attempt = 0; attempt < 100; attempt++) {
+			uint8_t wake_src = 0xff;
+			int rc = i2c_reg_read_byte_dt(&imu_i2c, 0x1B, &wake_src);
 
-			(void)i2c_reg_read_byte_dt(&imu_i2c, 0x1B, &wake_src);
 			k_sleep(K_MSEC(20));
+			printk("# drain %d: int=%d src=0x%02x rc=%d\n", attempt,
+			       gpio_pin_get_dt(&imu_int), wake_src, rc);
 			if (gpio_pin_get_dt(&imu_int) == 0) {
 				break;
 			}
