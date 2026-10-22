@@ -30,6 +30,8 @@
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/sys/poweroff.h>
 #include <zephyr/sys/reboot.h>
+#include <zephyr/irq.h>
+#include <hal/nrf_gpio.h>
 #include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/regulator.h>
 
@@ -1056,23 +1058,59 @@ static void enter_deep_sleep(void)
 		sys_reboot(SYS_REBOOT_COLD);
 	}
 
-	/* 4. Configure P0.02 GPIO interrupt as level active trigger.
-	 * In Zephyr, for nRF SoCs, level-trigger enables the GPIO SENSE high/low logic,
-	 * which is the only wake-up source active in System OFF.
+	/* 4. Print while interrupts are still enabled: with IRQs locked the UART
+	 * console cannot drain and printk() would block.
 	 */
-	if (gpio_is_ready_dt(&imu_int)) {
-		/* Disable active handler to avoid firing ISR */
-		gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_DISABLE);
-		/* Configure level active trigger for SENSE wakeup */
-		gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_LEVEL_ACTIVE);
-	}
-
 	printk("# Powering down System OFF now. Wake up on movement/shot.\n");
 	/* Wait for print to finish */
 	k_sleep(K_MSEC(50));
 
-	/* 5. Enter System OFF */
+	/*
+	 * 5. Lock interrupts from here on. imu_int_handler() reconfigures the very
+	 * same pin with GPIO_INT_DISABLE, which clears the SENSE bit the System OFF
+	 * wake source depends on. With the old ordering there was a 50 ms window for
+	 * that ISR to run between arming the sense and powering down; a board that
+	 * lost that race could never be woken by motion again and needed the Reset
+	 * button. Holding the IRQ lock across "arm sense -> power down" closes the
+	 * window completely.
+	 */
+	unsigned int irq_key = irq_lock();
+
+	/* 6. Arm the level SENSE (sole System OFF wake source) under the lock. */
+	if (gpio_is_ready_dt(&imu_int)) {
+		gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_LEVEL_ACTIVE);
+	}
+
+	/* 7. Read back the SENSE field and the pin level. sense must be non-zero
+	 * (SENSE_HIGH = 3 on nRF54L, SENSE_LOW = 1, NOSENSE = 0). A high pin means
+	 * INT1 already fired, so powering down now would miss that edge.
+	 */
+	{
+		uint32_t wake_pin = NRF_GPIO_PIN_MAP(0, 2);
+		nrf_gpio_pin_sense_t sense = nrf_gpio_pin_sense_get(wake_pin);
+		int level = gpio_pin_get_dt(&imu_int);
+
+		printk("# pre-poweroff: sense_armed=%d sense=%d(%s) level=%d\n",
+		       sense != NRF_GPIO_PIN_NOSENSE ? 1 : 0, (int)sense,
+		       sense == NRF_GPIO_PIN_SENSE_HIGH ? "HIGH" :
+		       sense == NRF_GPIO_PIN_SENSE_LOW ? "LOW" : "DISABLED",
+		       level);
+
+		if (level != 0) {
+			irq_unlock(irq_key);
+			printk("# INT1 already active, skip poweroff\n");
+			return;
+		}
+	}
+
+	/* 8. Enter System OFF (no sleeping while interrupts are locked). */
 	sys_poweroff();
+
+	/* Not reached: keep a debugger-forced return from running the application
+	 * with interrupts locked.
+	 */
+	irq_unlock(irq_key);
+	CODE_UNREACHABLE;
 }
 
 static int configure_imu(void)
