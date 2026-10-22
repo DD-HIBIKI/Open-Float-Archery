@@ -423,7 +423,11 @@ static uint32_t fifo_resync_count;
 static int64_t led_shot_until_ms;
 static float shot_accel_threshold_mps2 =
 	DEFAULT_SHOT_ACCEL_THRESHOLD_G * MPS2_PER_G;
-static float wake_sensitivity_g = 2.0f;
+/*
+ * 2.0 g needed a very deliberate shake to wake the board from System OFF in
+ * practice; 0.5 g (the lowest the setting allows) wakes on ordinary handling.
+ */
+static float wake_sensitivity_g = 0.5f;
 static float sleep_sensitivity_g = 0.15f;
 /*
  * Delay before persisting the stored-shot log to RRAM after a shot while
