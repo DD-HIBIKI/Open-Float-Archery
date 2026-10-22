@@ -3378,7 +3378,8 @@ int main(void)
 				flags |= BIT(1);
 			}
 
-			if (atomic_get_and_clear(&waketest_requested)) {
+			if (atomic_get(&waketest_requested) != 0) {
+				atomic_set(&waketest_requested, 0);
 				run_waketest();
 			}
 
