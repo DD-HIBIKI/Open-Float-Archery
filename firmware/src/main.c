@@ -1081,6 +1081,22 @@ static void enter_deep_sleep(void)
 		gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_LEVEL_ACTIVE);
 	}
 
+	/* Hardware-level force: bypass the GPIO driver entirely and set PIN_CNF.SENSE
+	 * by hand, in case GPIO_INT_LEVEL_ACTIVE never reaches the SENSE field on this
+	 * SoC. Refresh the DETECT latch so a stale event cannot swallow the edge.
+	 */
+	{
+		uint32_t wake_pin = NRF_GPIO_PIN_MAP(0, 2);
+
+		nrf_gpio_cfg_input(wake_pin, NRF_GPIO_PIN_NOPULL);
+		nrf_gpio_cfg_sense_set(wake_pin, NRF_GPIO_PIN_SENSE_HIGH);
+#if defined(NRF_GPIO_LATCH_PRESENT)
+		nrf_gpio_port_detect_latch_set(NRF_P0, true);
+		NRF_P0->LATCH = 0xFFFFFFFF;
+		(void)NRF_P0->LATCH;
+#endif
+	}
+
 	/* 7. Read back the SENSE field and the pin level. sense must be non-zero
 	 * (SENSE_HIGH = 3 on nRF54L, SENSE_LOW = 1, NOSENSE = 0). A high pin means
 	 * INT1 already fired, so powering down now would miss that edge.
