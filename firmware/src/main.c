@@ -3033,20 +3033,33 @@ static void run_waketest(void)
 	(void)gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_DISABLE);
 
 	int last_level = gpio_pin_get_dt(&imu_int);
+	int high_samples = 0;
 
 	printk("# waketest: t=0ms int1=%d\n", last_level);
-	for (int i = 1; i <= 150; i++) {
+	/* Sample at 10 ms: an unlatched wake pulse is only ~1/ODR wide (~38 ms at
+	 * 26 Hz) and far shorter than the previous 200 ms poll, which is why no
+	 * transition was seen. Print a heartbeat so a silent log is unambiguous.
+	 */
+	for (int i = 1; i <= 4000; i++) {
 		int level = gpio_pin_get_dt(&imu_int);
 
+		if (level != 0) {
+			high_samples++;
+		}
 		if (level != last_level) {
 			uint8_t wake_src = 0;
 
 			(void)i2c_reg_read_byte_dt(&imu_i2c, 0x1B, &wake_src);
-			printk("# waketest: t=%dms int1=%d ws=0x%02x\n", i * 200, level, wake_src);
+			printk("# waketest: t=%dms int1=%d ws=0x%02x\n", i * 10, level, wake_src);
 			last_level = level;
 		}
-		k_sleep(K_MSEC(200));
+		if ((i % 500) == 0) {
+			printk("# waketest: t=%dms alive, int1=%d high_samples=%d\n",
+			       i * 10, level, high_samples);
+		}
+		k_sleep(K_MSEC(10));
 	}
+	printk("# waketest: total high samples=%d\n", high_samples);
 	printk("# waketest: done, rebooting\n");
 	k_sleep(K_MSEC(100));
 	sys_reboot(SYS_REBOOT_COLD);
