@@ -393,6 +393,8 @@ static const struct gpio_dt_spec imu_int =
 	GPIO_DT_SPEC_GET_OR(DT_ALIAS(imu0), irq_gpios, { 0 });
 static struct gpio_callback imu_int_cb;
 static K_SEM_DEFINE(imu_fifo_sem, 0, 1);
+/* One-shot diagnostic requested over BLE; executed from the main loop. */
+static atomic_t waketest_requested;
 static const struct gpio_dt_spec user_led =
 	GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios, { 0 });
 static const struct gpio_dt_spec user_btn =
@@ -2481,35 +2483,11 @@ static ssize_t handle_openfloat_control(struct bt_conn *conn,
 		k_sleep(K_MSEC(100));
 		sys_reboot(SYS_REBOOT_COLD);
 	} else if (!strncmp(command, "waketest", strlen("waketest"))) {
-		/* Diagnostic: switch the IMU into its System OFF wake configuration and
-		 * then only watch INT1 for 30 s. This separates "the IMU never raises
-		 * the wake line" from "the SoC never reacts to it".
+		/* Only set a flag: prepare_imu_for_sleep() talks I2C, which the main
+		 * loop is already using for the FIFO drain. Doing it from the BLE
+		 * callback thread hung the board.
 		 */
-		printk("# waketest: prepare_imu_for_sleep ...\n");
-		int wrc = prepare_imu_for_sleep();
-
-		printk("# waketest: prepare_imu_for_sleep=%d, watching INT1 for 30 s\n", wrc);
-		(void)gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_DISABLE);
-
-		int last_level = gpio_pin_get_dt(&imu_int);
-
-		printk("# waketest: t=0ms int1=%d\n", last_level);
-		for (int i = 1; i <= 150; i++) {
-			int level = gpio_pin_get_dt(&imu_int);
-
-			if (level != last_level) {
-				uint8_t wake_src = 0;
-
-				(void)i2c_reg_read_byte_dt(&imu_i2c, 0x1B, &wake_src);
-				printk("# waketest: t=%dms int1=%d ws=0x%02x\n",
-				       i * 200, level, wake_src);
-				last_level = level;
-			}
-			k_sleep(K_MSEC(200));
-		}
-		printk("# waketest: done, rebooting\n");
-		k_sleep(K_MSEC(100));
-		sys_reboot(SYS_REBOOT_COLD);
+		atomic_set(&waketest_requested, 1);
 	} else if (!strncmp(command, "streamrate:", strlen("streamrate:"))) {
 		uint32_t value;
 		if (openfloat_parse_u32(command + strlen("streamrate:"), &value) &&
@@ -3042,6 +3020,38 @@ static void confirm_image_work_handler(struct k_work *work)
 K_WORK_DELAYABLE_DEFINE(confirm_image_work, confirm_image_work_handler);
 #endif
 
+/*
+ * Diagnostic: switch the IMU into its System OFF wake configuration and watch
+ * INT1 for 30 s. This separates "the IMU never raises the wake line" from "the
+ * SoC never reacts to it". Runs in the main thread, then reboots.
+ */
+static void run_waketest(void)
+{
+	int rc = prepare_imu_for_sleep();
+
+	printk("# waketest: prepare_imu_for_sleep=%d, watching INT1 for 30 s\n", rc);
+	(void)gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_DISABLE);
+
+	int last_level = gpio_pin_get_dt(&imu_int);
+
+	printk("# waketest: t=0ms int1=%d\n", last_level);
+	for (int i = 1; i <= 150; i++) {
+		int level = gpio_pin_get_dt(&imu_int);
+
+		if (level != last_level) {
+			uint8_t wake_src = 0;
+
+			(void)i2c_reg_read_byte_dt(&imu_i2c, 0x1B, &wake_src);
+			printk("# waketest: t=%dms int1=%d ws=0x%02x\n", i * 200, level, wake_src);
+			last_level = level;
+		}
+		k_sleep(K_MSEC(200));
+	}
+	printk("# waketest: done, rebooting\n");
+	k_sleep(K_MSEC(100));
+	sys_reboot(SYS_REBOOT_COLD);
+}
+
 int main(void)
 {
 	struct quat q = {
@@ -3366,6 +3376,10 @@ int main(void)
 			update_user_led();
 			if (shot_counters_snapshot().count > 0) {
 				flags |= BIT(1);
+			}
+
+			if (atomic_get_and_clear(&waketest_requested)) {
+				run_waketest();
 			}
 
 			if ((telemetry_sequence % SERIAL_PRINT_DIVIDER) == 0) {
