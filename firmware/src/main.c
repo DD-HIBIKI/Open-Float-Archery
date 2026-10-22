@@ -42,6 +42,7 @@
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/sys/poweroff.h>
 #include <zephyr/sys/reboot.h>
+#include <helpers/nrfx_reset_reason.h>
 #if defined(CONFIG_MCUBOOT_IMG_MANAGER)
 #include <zephyr/dfu/mcuboot.h>
 #endif
@@ -2976,6 +2977,25 @@ K_WORK_DELAYABLE_DEFINE(confirm_image_work, confirm_image_work_handler);
 
 int main(void)
 {
+	/* Read RESETREAS before anything else can clear it. Bit layout is the
+	 * nRF54L15 one (RESET_RESETREAS_*_Pos), which differs from nRF52 entirely.
+	 */
+	{
+		uint32_t reason = nrfx_reset_reason_get();
+
+		nrfx_reset_reason_clear(UINT32_MAX);
+		printk("# RESET reason: 0x%08x\n", reason);
+		printk("#   RESETPIN=%d DOG0=%d DOG1=%d CTRLAPSOFT=%d CTRLAPHARD=%d CTRLAPPIN=%d\n",
+		       !!(reason & 0x00000001), !!(reason & 0x00000002),
+		       !!(reason & 0x00000004), !!(reason & 0x00000008),
+		       !!(reason & 0x00000010), !!(reason & 0x00000020));
+		printk("#   SREQ=%d LOCKUP=%d OFF=%d LPCOMP=%d DIF=%d GRTC=%d NFC=%d SECTAMPER=%d\n",
+		       !!(reason & 0x00000040), !!(reason & 0x00000080),
+		       !!(reason & 0x00000100), !!(reason & 0x00000200),
+		       !!(reason & 0x00000400), !!(reason & 0x00000800),
+		       !!(reason & 0x00001000), !!(reason & 0x00002000));
+	}
+
 	struct quat q = {
 		.w = 1.0f,
 		.x = 0.0f,
