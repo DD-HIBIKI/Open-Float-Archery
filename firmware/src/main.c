@@ -2480,6 +2480,36 @@ static ssize_t handle_openfloat_control(struct bt_conn *conn,
 		printk("# BLE control: rebooting\n");
 		k_sleep(K_MSEC(100));
 		sys_reboot(SYS_REBOOT_COLD);
+	} else if (!strncmp(command, "waketest", strlen("waketest"))) {
+		/* Diagnostic: switch the IMU into its System OFF wake configuration and
+		 * then only watch INT1 for 30 s. This separates "the IMU never raises
+		 * the wake line" from "the SoC never reacts to it".
+		 */
+		printk("# waketest: prepare_imu_for_sleep ...\n");
+		int wrc = prepare_imu_for_sleep();
+
+		printk("# waketest: prepare_imu_for_sleep=%d, watching INT1 for 30 s\n", wrc);
+		(void)gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_DISABLE);
+
+		int last_level = gpio_pin_get_dt(&imu_int);
+
+		printk("# waketest: t=0ms int1=%d\n", last_level);
+		for (int i = 1; i <= 150; i++) {
+			int level = gpio_pin_get_dt(&imu_int);
+
+			if (level != last_level) {
+				uint8_t wake_src = 0;
+
+				(void)i2c_reg_read_byte_dt(&imu_i2c, 0x1B, &wake_src);
+				printk("# waketest: t=%dms int1=%d ws=0x%02x\n",
+				       i * 200, level, wake_src);
+				last_level = level;
+			}
+			k_sleep(K_MSEC(200));
+		}
+		printk("# waketest: done, rebooting\n");
+		k_sleep(K_MSEC(100));
+		sys_reboot(SYS_REBOOT_COLD);
 	} else if (!strncmp(command, "streamrate:", strlen("streamrate:"))) {
 		uint32_t value;
 		if (openfloat_parse_u32(command + strlen("streamrate:"), &value) &&
