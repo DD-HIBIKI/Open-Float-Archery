@@ -3025,22 +3025,34 @@ K_WORK_DELAYABLE_DEFINE(confirm_image_work, confirm_image_work_handler);
  * INT1 for 30 s. This separates "the IMU never raises the wake line" from "the
  * SoC never reacts to it". Runs in the main thread, then reboots.
  */
-static void run_waketest(void)
+static void waketest_dump_regs(const char *tag)
 {
-	int rc = prepare_imu_for_sleep();
+	static const struct {
+		uint8_t reg;
+		const char *name;
+	} regs[] = {
+		{ 0x10, "CTRL1_XL" }, { 0x11, "CTRL2_G" }, { 0x15, "CTRL6_C" },
+		{ 0x58, "TAP_CFG" },  { 0x5B, "WAKE_UP_THS" }, { 0x5C, "WAKE_UP_DUR" },
+		{ 0x5E, "MD1_CFG" },
+	};
 
-	printk("# waketest: prepare_imu_for_sleep=%d, watching INT1 for 30 s\n", rc);
-	(void)gpio_pin_interrupt_configure_dt(&imu_int, GPIO_INT_DISABLE);
+	for (size_t i = 0; i < ARRAY_SIZE(regs); i++) {
+		uint8_t value = 0;
+		int rc = i2c_reg_read_byte_dt(&imu_i2c, regs[i].reg, &value);
 
+		printk("# waketest[%s]: %s(0x%02x)=0x%02x rc=%d\n", tag, regs[i].name,
+		       regs[i].reg, value, rc);
+	}
+}
+
+static void waketest_watch(const char *tag, int samples)
+{
 	int last_level = gpio_pin_get_dt(&imu_int);
 	int high_samples = 0;
 
-	printk("# waketest: t=0ms int1=%d\n", last_level);
-	/* Sample at 10 ms: an unlatched wake pulse is only ~1/ODR wide (~38 ms at
-	 * 26 Hz) and far shorter than the previous 200 ms poll, which is why no
-	 * transition was seen. Print a heartbeat so a silent log is unambiguous.
-	 */
-	for (int i = 1; i <= 4000; i++) {
+	printk("# waketest[%s]: int1 at start=%d\n", tag, last_level);
+	for (int i = 1; i <= samples; i++) {
+		uint8_t raw[6] = { 0 };
 		int level = gpio_pin_get_dt(&imu_int);
 
 		if (level != 0) {
@@ -3050,20 +3062,48 @@ static void run_waketest(void)
 			uint8_t wake_src = 0;
 
 			(void)i2c_reg_read_byte_dt(&imu_i2c, 0x1B, &wake_src);
-			printk("# waketest: t=%dms int1=%d ws=0x%02x\n", i * 10, level, wake_src);
+			printk("# waketest[%s]: t=%dms int1=%d ws=0x%02x\n", tag, i * 10,
+			       level, wake_src);
 			last_level = level;
 		}
-		if ((i % 500) == 0) {
-			printk("# waketest: t=%dms alive, int1=%d high_samples=%d\n",
-			       i * 10, level, high_samples);
+		if ((i % 100) == 0) {
+			int16_t ax = 0, ay = 0, az = 0;
+
+			if (i2c_burst_read_dt(&imu_i2c, 0x28, raw, sizeof(raw)) == 0) {
+				ax = (int16_t)((raw[1] << 8) | raw[0]);
+				ay = (int16_t)((raw[3] << 8) | raw[2]);
+				az = (int16_t)((raw[5] << 8) | raw[4]);
+			}
+			printk("# waketest[%s]: t=%dms int1=%d high=%d acc=(%d,%d,%d)\n",
+			       tag, i * 10, level, high_samples, ax, ay, az);
 		}
 		k_sleep(K_MSEC(10));
 	}
-	printk("# waketest: total high samples=%d\n", high_samples);
+	printk("# waketest[%s]: high samples=%d\n", tag, high_samples);
+}
+
+static void run_waketest(void)
+{
+	int rc = prepare_imu_for_sleep();
+
+	printk("# waketest: prepare_imu_for_sleep=%d\n", rc);
+	waketest_dump_regs("after-prepare");
+
+	/* Phase A: the configuration the firmware ships with. */
+	waketest_watch("A", 1200);   /* 12 s */
+
+	/* Phase B: same wake routing but with latched interrupts (TAP_CFG bit 6),
+	 * so a short WU pulse holds INT1 high instead of a ~38 ms blip.
+	 */
+	(void)i2c_reg_write_byte_dt(&imu_i2c, 0x58, 0xC0);
+	waketest_dump_regs("phase-b");
+	waketest_watch("B", 2000);   /* 20 s */
+
 	printk("# waketest: done, rebooting\n");
 	k_sleep(K_MSEC(100));
 	sys_reboot(SYS_REBOOT_COLD);
 }
+
 
 int main(void)
 {
