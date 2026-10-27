@@ -345,7 +345,13 @@ async def run(args) -> int:
             # device negotiates 212 (CONFIG_BT_L2CAP_TX_MTU), i.e. 209 usable.
             mtu = 212
         payload_limit = max(64, (mtu - 3) if mtu else 244)
-        chunk_size = args.chunk or max(48, min(160, payload_limit - 8 - 24))
+        # The first upload packet also carries the total length and the image's
+        # SHA-256 (4 + 32 bytes) plus the CBOR overhead, so the image slice has to
+        # stay well under MTU-3: at MTU 212 the old 160-byte slice made Windows
+        # reject the first write with E_INVALIDARG (0x80070057).
+        first_packet_overhead = 8 + 4 + 32 + 16
+        limit = max(20, payload_limit - first_packet_overhead)
+        chunk_size = min(args.chunk, limit) if args.chunk else max(48, min(160, limit))
         print(f"MTU {mtu or 'unknown'} -> {chunk_size}-byte image chunks")
 
         smp = SmpClient(client, SMP_CHAR)
