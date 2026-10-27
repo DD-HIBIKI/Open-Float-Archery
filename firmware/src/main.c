@@ -390,7 +390,16 @@ static void stop_pdm(void)
  */
 #define MIN_SHOT_ACCEL_THRESHOLD_G 0.5f
 #define MAX_SHOT_ACCEL_THRESHOLD_G 30.0f
-#define SHOT_REFRACTORY_MS 800
+#define SHOT_REFRACTORY_MS 1200
+/*
+ * At the light-limb floor (0.5 g) the recoil after a release keeps crossing the
+ * threshold, so the 800 ms refractory period re-fired the gate on the bow's own
+ * oscillation: one arrow was recorded as 2-6 captures, each one a motion-blurred
+ * trace. A shot now disarms the gate until the magnitude has stayed below half the
+ * threshold for SHOT_REARM_QUIET_MS, which the recoil cannot satisfy.
+ */
+#define SHOT_REARM_QUIET_MS 300
+#define SHOT_REARM_FRACTION 0.5f
 
 #define LED_IDLE_PERIOD_MS 500
 #define LED_SHOT_PULSE_MS 120
@@ -1418,6 +1427,8 @@ static bool detect_shot(const struct vec3 *accel, const struct vec3 *gyro, uint6
 			float roll_deg, float pitch_deg, float yaw_deg)
 {
 	static int64_t last_shot_ms;
+	static int64_t quiet_since_ms;
+	static bool armed = true;
 	float mag2 = (accel->x * accel->x) + (accel->y * accel->y) +
 		     (accel->z * accel->z);
 	float threshold = shot_accel_threshold_mps2;
@@ -1428,8 +1439,27 @@ static bool detect_shot(const struct vec3 *accel, const struct vec3 *gyro, uint6
 	float min_gyro_rad_s = 1.5f; /* ~85 deg/s minimum rotation during recoil */
 	float min_gyro_rad_s2 = min_gyro_rad_s * min_gyro_rad_s;
 
-	if (mag2 > thresh2 && gyro_mag2 > min_gyro_rad_s2 && (now_ms - last_shot_ms) > SHOT_REFRACTORY_MS) {
+	/* Track how long the reading has been quiet. Below half the threshold is the
+	 * hysteresis band: the recoil and the bow dropping stay above it, so they can
+	 * no longer re-arm the gate.
+	 */
+	float quiet2 = thresh2 * SHOT_REARM_FRACTION * SHOT_REARM_FRACTION;
+	if (mag2 < quiet2) {
+		if (quiet_since_ms == 0) {
+			quiet_since_ms = now_ms;
+		}
+	} else {
+		quiet_since_ms = 0;
+	}
+	if (!armed && quiet_since_ms != 0 && (now_ms - quiet_since_ms) >= SHOT_REARM_QUIET_MS) {
+		armed = true;
+	}
+
+	if (armed && mag2 > thresh2 && gyro_mag2 > min_gyro_rad_s2 &&
+	    (now_ms - last_shot_ms) > SHOT_REFRACTORY_MS) {
 		last_shot_ms = now_ms;
+		armed = false;
+		quiet_since_ms = 0;
 		return true;
 	}
 
