@@ -381,7 +381,14 @@ static void stop_pdm(void)
 
 #define MPS2_PER_G 9.81f
 #define DEFAULT_SHOT_ACCEL_THRESHOLD_G 12.0f
-#define MIN_SHOT_ACCEL_THRESHOLD_G 2.0f
+/*
+ * 0.5 g is the floor for light limbs: the 28 lb setup does not reach 2.0 g, which
+ * is why the trainer preset never fired at that floor. Handling can now satisfy
+ * the acceleration gate more easily, so the 1.5 rad/s gyro condition in
+ * detect_shot() still has to pass, and the browser marks captures whose hold
+ * segment was moving instead of scoring them as shots.
+ */
+#define MIN_SHOT_ACCEL_THRESHOLD_G 0.5f
 #define MAX_SHOT_ACCEL_THRESHOLD_G 30.0f
 #define SHOT_REFRACTORY_MS 800
 
