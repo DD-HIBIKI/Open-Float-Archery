@@ -345,13 +345,25 @@ async def run(args) -> int:
             # device negotiates 212 (CONFIG_BT_L2CAP_TX_MTU), i.e. 209 usable.
             mtu = 212
         payload_limit = max(64, (mtu - 3) if mtu else 244)
+        chunk_size = args.chunk or max(48, min(160, payload_limit - 64))
+
         # The first upload packet also carries the total length and the image's
-        # SHA-256 (4 + 32 bytes) plus the CBOR overhead, so the image slice has to
-        # stay well under MTU-3: at MTU 212 the old 160-byte slice made Windows
-        # reject the first write with E_INVALIDARG (0x80070057).
-        first_packet_overhead = 8 + 4 + 32 + 16
-        limit = max(20, payload_limit - first_packet_overhead)
-        chunk_size = min(args.chunk, limit) if args.chunk else max(48, min(160, limit))
+        # SHA-256, and Windows rejects an oversized write with E_INVALIDARG
+        # (0x80070057) - which looked like a stack error and killed every attempt at
+        # MTU 212 with 149- and 160-byte slices. Size the slice against a real probe
+        # of that packet instead of a guessed overhead.
+        def first_packet_size(slice_size: int) -> int:
+            probe = {
+                "image": cbor_uint(0),
+                "data": cbor_bytes(bytes(slice_size)),
+                "off": cbor_uint(0),
+                "len": cbor_uint(1 << 24),
+                "sha": cbor_bytes(bytes(32)),
+            }
+            return 8 + len(cbor_map(probe))
+
+        while chunk_size > 20 and first_packet_size(chunk_size) > payload_limit:
+            chunk_size -= 4
         print(f"MTU {mtu or 'unknown'} -> {chunk_size}-byte image chunks")
 
         smp = SmpClient(client, SMP_CHAR)
