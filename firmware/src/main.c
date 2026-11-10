@@ -395,8 +395,12 @@ static void stop_pdm(void)
  * At the light-limb floor (0.5 g) the recoil after a release keeps crossing the
  * threshold, so the 800 ms refractory period re-fired the gate on the bow's own
  * oscillation: one arrow was recorded as 2-6 captures, each one a motion-blurred
- * trace. A shot now disarms the gate until the magnitude has stayed below half the
- * threshold for SHOT_REARM_QUIET_MS, which the recoil cannot satisfy.
+ * trace. A shot now disarms the gate until the *dynamic* acceleration (deviation
+ * from 1 g of gravity) has stayed below half the threshold for
+ * SHOT_REARM_QUIET_MS, which the recoil cannot satisfy. The deviation, not the raw
+ * magnitude, is what matters: a raw-magnitude test is unreachable at rest for any
+ * threshold below 1 g, and firmware 1.1.0.29 latched itself off after one shot
+ * (0.5 g preset -> quiet needed |a| < 0.25 g while gravity alone is 1 g).
  */
 #define SHOT_REARM_QUIET_MS 300
 #define SHOT_REARM_FRACTION 0.5f
@@ -1439,12 +1443,19 @@ static bool detect_shot(const struct vec3 *accel, const struct vec3 *gyro, uint6
 	float min_gyro_rad_s = 1.5f; /* ~85 deg/s minimum rotation during recoil */
 	float min_gyro_rad_s2 = min_gyro_rad_s * min_gyro_rad_s;
 
-	/* Track how long the reading has been quiet. Below half the threshold is the
-	 * hysteresis band: the recoil and the bow dropping stay above it, so they can
-	 * no longer re-arm the gate.
+	/* Track how long the reading has been quiet. Quiet is about the *dynamic*
+	 * acceleration, not the raw magnitude: at rest the accelerometer still reads
+	 * 1 g of gravity, so a fraction of a sub-1 g threshold can never be reached
+	 * (with the 0.5 g light-limb threshold, quiet2 = 0.25 g < 1 g of gravity, so
+	 * the gate stayed disarmed after the very first shot and no further arrow
+	 * could ever be captured). Comparing the deviation from 1 g keeps the
+	 * hysteresis band meaningful at every threshold: 6 g for the 12 g bow preset
+	 * and 0.25 g for the 0.5 g light-limb preset.
 	 */
-	float quiet2 = thresh2 * SHOT_REARM_FRACTION * SHOT_REARM_FRACTION;
-	if (mag2 < quiet2) {
+	float a_mag = sqrtf(mag2);
+	float a_dev = fabsf(a_mag - MPS2_PER_G);
+	float quiet_dev = threshold * SHOT_REARM_FRACTION;
+	if (a_dev < quiet_dev) {
 		if (quiet_since_ms == 0) {
 			quiet_since_ms = now_ms;
 		}
@@ -1455,6 +1466,11 @@ static bool detect_shot(const struct vec3 *accel, const struct vec3 *gyro, uint6
 		armed = true;
 	}
 
+	/* Note: below 1 g the magnitude test is always true at rest, so a sub-1 g
+	 * preset is effectively gated by the gyro condition only, which is the
+	 * intended behaviour for a soft 28 lb release (measured peaks are ~1.2-1.4 g
+	 * total, i.e. well under 2 g but above 1 g of gravity).
+	 */
 	if (armed && mag2 > thresh2 && gyro_mag2 > min_gyro_rad_s2 &&
 	    (now_ms - last_shot_ms) > SHOT_REFRACTORY_MS) {
 		last_shot_ms = now_ms;
