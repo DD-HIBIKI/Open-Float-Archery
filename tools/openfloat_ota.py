@@ -317,14 +317,35 @@ def describe_images(response: dict) -> None:
 async def find_device(timeout: float):
     from bleak import BleakScanner
 
+    # A single discover() call can miss the device when its scan response (which
+    # carries the name) arrives after the scan window, leaving an unnamed entry
+    # that the name filter skips. Accumulate advertisements for the whole window
+    # and also accept the OpenFloat primary service as evidence.
     print(f"Scanning for OpenFloat for {timeout:.0f} s...")
-    devices = await BleakScanner.discover(timeout=timeout)
-    for device in devices:
-        if (device.name or "").startswith("OpenFloat"):
-            print(f"Found {device.name} at {device.address}")
-            return device
+    found: dict = {}
+    seen: dict = {}
+
+    def on_detect(device, advertisement):
+        name = device.name or advertisement.local_name or ""
+        seen[device.address] = name
+        uuids = [str(uuid).lower() for uuid in (advertisement.service_uuids or [])]
+        if name.startswith("OpenFloat") or any(uuid.startswith("8f3f3b10-") for uuid in uuids):
+            found[device.address] = (device, name)
+
+    scan_timeout = max(1.0, timeout)
+    scanner = BleakScanner(detection_callback=on_detect)
+    await scanner.start()
+    try:
+        deadline = time.monotonic() + scan_timeout
+        while time.monotonic() < deadline:
+            for address, (device, name) in found.items():
+                print(f"Found {name or '(OpenFloat service)'} at {address}")
+                return device
+            await asyncio.sleep(0.2)
+    finally:
+        await scanner.stop()
     print("No OpenFloat device found. Is it awake and not connected elsewhere?")
-    print("Visible devices:", [(d.address, d.name) for d in devices])
+    print("Visible devices:", sorted(seen.items()))
     return None
 
 
