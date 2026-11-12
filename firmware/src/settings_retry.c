@@ -72,6 +72,7 @@ const char *settings_retry_key(enum openfloat_setting key)
 		"openfloat/shots", "openfloat/shotlog", "openfloat/wakesens", "openfloat/sleeptime",
 		"openfloat/sleepsens", "openfloat/bufrate", "openfloat/bufnvs", "openfloat/autosleep",
 		"openfloat/streamrate", "openfloat/followms", "openfloat/cant_offset", "openfloat/pitch_offset",
+		"openfloat/thresh",
 	};
 	_Static_assert(sizeof(names) / sizeof(names[0]) == SETTING_COUNT, "Settings key list changed");
 	return names[key];
@@ -84,6 +85,7 @@ int settings_retry_save(enum openfloat_setting key, const struct sleep_flush_val
 		&values->counters, values->queue, &values->wakesens, &values->sleeptime,
 		&values->sleepsens, &values->bufrate, &values->bufnvs, &values->autosleep,
 		&values->streamrate, &values->followms, &values->cant_offset, &values->pitch_offset,
+		&values->thresh,
 	};
 	_Static_assert(sizeof(data) / sizeof(data[0]) == SETTING_COUNT, "Settings value list changed");
 	size_t size = key == SETTING_SHOTS ? sizeof(values->counters) :

@@ -33,15 +33,16 @@ static struct openfloat_shot_counters expected_counters = { 42, 70004 };
 static const char *const ordinary[] = {
 	"shots", "shotlog", "wakesens", "sleeptime", "sleepsens", "bufrate",
 	"bufnvs", "autosleep", "streamrate", "followms", "cant_offset", "pitch_offset",
+	"thresh",
 };
-static const int32_t tuning[] = { 2000, 300000, 150, 52, 1, 1, 1, 1500, -7250, 1950 };
+static const int32_t tuning[] = { 2000, 300000, 150, 52, 1, 1, 1, 1500, -7250, 1950, 50 };
 
 static struct {
 	struct openfloat_shot_counters counters;
 	struct stored_shot_log log;
 	struct trace_store store;
 	struct stored_trace traces[TRACE_RAM_SLOTS];
-	bool tunings[10];
+	bool tunings[11];
 	bool counter_present, full_log_ids, id_recovered;
 	unsigned int resets;
 } restored;
@@ -138,7 +139,7 @@ static int restore_setting(void *context, const char *name)
 		if (rc != 4) return -EBADMSG;
 		int32_t value;
 		memcpy(&value, &scratch, 4);
-		bool valid = i < 10 ? openfloat_valid_tuning_setting(name, (uint32_t)value) : true;
+		bool valid = i < 11 ? openfloat_valid_tuning_setting(name, (uint32_t)value) : true;
 		if (!valid) return -EBADMSG;
 		assert(value == tuning[i - 2]);
 		restored.tunings[i - 2] = true;
@@ -214,7 +215,7 @@ static void check_restored(void)
 	/* This read-fault fixture already has the newest ID, so it needs no repair. */
 	assert(restored.counters.count == expected_counters.count && restored.counters.shot_id == 70004);
 	assert(!memcmp(&restored.log, &expected_log, sizeof(expected_log)));
-	for (unsigned int i = 0; i < 10; i++) assert(restored.tunings[i]);
+	for (unsigned int i = 0; i < 11; i++) assert(restored.tunings[i]);
 	assert(restored.store.ready);
 	for (uint32_t id = 70001; id <= 70004; id++) {
 		const struct stored_trace *trace = &restored.traces[id % TRACE_RAM_SLOTS];
@@ -241,7 +242,7 @@ static struct {
 	unsigned int target, mode, remaining, calls[SETTING_COUNT];
 	bool replace_in_flight, old_result_fails;
 } awake;
-static const int32_t awake_tuning[] = { 2500, 500000, 200, 104, 0, 1, 2, 2000, -8000, 2200 };
+static const int32_t awake_tuning[] = { 2500, 500000, 200, 104, 0, 1, 2, 2000, -8000, 2200, 50 };
 
 static int write_awake(void *context, const char *name, const void *data, size_t size)
 {

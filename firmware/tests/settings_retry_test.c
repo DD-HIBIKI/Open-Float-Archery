@@ -9,12 +9,13 @@ static const char *const names[] = {
 	"openfloat/shots", "openfloat/shotlog", "openfloat/wakesens", "openfloat/sleeptime",
 	"openfloat/sleepsens", "openfloat/bufrate", "openfloat/bufnvs", "openfloat/autosleep",
 	"openfloat/streamrate", "openfloat/followms", "openfloat/cant_offset", "openfloat/pitch_offset",
+	"openfloat/thresh",
 };
 static struct settings_retry queue;
 static struct stored_shot_log log;
 static struct sleep_flush_values values;
-static uint8_t saved[12][2804];
-static unsigned int writes[12], fail_key, remaining_failures, failure_mode;
+static uint8_t saved[13][2804];
+static unsigned int writes[13], fail_key, remaining_failures, failure_mode;
 
 static uint32_t read32(const uint8_t *p)
 { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
@@ -23,8 +24,8 @@ static int write_value(void *context, const char *name, const void *data, size_t
 {
 	(void)context;
 	unsigned int key = 0;
-	while (key < 12 && strcmp(name, names[key])) key++;
-	assert(key < 12 && size == (key == 0 ? 8u : (key == 1 ? 2804u : 4u)));
+	while (key < 13 && strcmp(name, names[key])) key++;
+	assert(key < 13 && size == (key == 0 ? 8u : (key == 1 ? 2804u : 4u)));
 	writes[key]++;
 	bool fail = key == fail_key && remaining_failures;
 	if (fail) remaining_failures--;
@@ -36,8 +37,8 @@ static int write_value(void *context, const char *name, const void *data, size_t
 
 static void check_saved(void)
 {
-	const int32_t expected[] = { 2500, 500000, 200, 104, 0, 1, 2, 2000, -8000, 2200 };
-	for (unsigned int key = 2; key < 12; key++) assert(read32(saved[key]) == (uint32_t)expected[key - 2]);
+	const int32_t expected[] = { 2500, 500000, 200, 104, 0, 1, 2, 2000, -8000, 2200, 50 };
+	for (unsigned int key = 2; key < 13; key++) assert(read32(saved[key]) == (uint32_t)expected[key - 2]);
 	struct openfloat_shot_counters counter;
 	assert(openfloat_restore_shot_counters(&counter, saved[0], 8));
 	assert(counter.count == 43 && counter.shot_id == 90000);
@@ -72,7 +73,7 @@ static void check_queue(void)
 	uint32_t token;
 	assert(settings_retry_take(&queue, 0, &token) == -1);
 	assert(settings_retry_delay(&queue, 0) == UINT32_MAX);
-	for (unsigned int key = 0; key < 12; key++) {
+	for (unsigned int key = 0; key < 13; key++) {
 		queue = (struct settings_retry){ 0 };
 		for (unsigned int update = 0; update < 1000; update++) settings_retry_request(&queue, UINT32_C(1) << key, update);
 		assert(settings_retry_take(&queue, 999, &token) == (int)key && token == 1000 && queue.attempts[key] == 1);
@@ -98,7 +99,7 @@ static void check_queue(void)
 	settings_retry_request(&queue, 1, 0);
 	assert(settings_retry_take(&queue, 0, &token) == 0);
 	settings_retry_finish(&queue, 0, token, -EIO, 0);
-	for (unsigned int key = 1; key < 12; key++) {
+	for (unsigned int key = 1; key < 13; key++) {
 		settings_retry_request(&queue, UINT32_C(1) << key, 100);
 		assert(settings_retry_take(&queue, 100, &token) == (int)key);
 		settings_retry_finish(&queue, key, token, 0, 100);
@@ -109,7 +110,7 @@ static void check_queue(void)
 	settings_retry_request(&queue, SETTINGS_ALL, 0);
 	for (unsigned int step = 0; step < 600; step++) {
 		int key = settings_retry_take(&queue, 0, &token);
-		assert(key == (int)(step % 12));
+		assert(key == (int)(step % 13));
 		settings_retry_request(&queue, UINT32_C(1) << key, 0);
 		struct settings_retry before;
 		memcpy(&before, &queue, sizeof(before));
@@ -144,8 +145,8 @@ int main(void)
 	values = (struct sleep_flush_values){ .counters = { 43, 90000 }, .queue = &log,
 		.wakesens = 2500, .sleeptime = 500000, .sleepsens = 200, .bufrate = 104,
 		.bufnvs = 0, .autosleep = 1, .streamrate = 2, .followms = 2000,
-		.cant_offset = -8000, .pitch_offset = 2200 };
-	for (fail_key = 0; fail_key < 12; fail_key++) {
+		.cant_offset = -8000, .pitch_offset = 2200, .thresh = 50 };
+	for (fail_key = 0; fail_key < 13; fail_key++) {
 		for (failure_mode = 0; failure_mode < 3; failure_mode++) {
 			for (unsigned int failures = 1; failures <= 3; failures++) {
 				queue = (struct settings_retry){ 0 };
@@ -153,7 +154,7 @@ int main(void)
 				remaining_failures = failures;
 				settings_retry_request(&queue, SETTINGS_ALL, 0);
 				drain(0);
-				for (unsigned int key = 0; key < 12; key++) assert(writes[key] == (key == fail_key ? (failures < 3 ? failures + 1 : 3) : 1));
+				for (unsigned int key = 0; key < 13; key++) assert(writes[key] == (key == fail_key ? (failures < 3 ? failures + 1 : 3) : 1));
 				assert(queue.failed_mask == (failures == 3 ? (UINT32_C(1) << fail_key) : 0));
 				if (failures == 3) {
 					settings_retry_request(&queue, UINT32_C(1) << fail_key, 10000);
@@ -163,6 +164,6 @@ int main(void)
 			}
 		}
 	}
-	puts("Settings retry checks passed: all 12 layouts, 108 write-fault cases, bounded independent deadlines, coalescing/fairness, stale results, clock/token wrap, and recovery after exhaustion.");
+	puts("Settings retry checks passed: all 13 layouts, 108 write-fault cases, bounded independent deadlines, coalescing/fairness, stale results, clock/token wrap, and recovery after exhaustion.");
 	return 0;
 }

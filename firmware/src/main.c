@@ -1658,6 +1658,20 @@ static int openfloat_settings_set(const char *name, size_t len,
 		return 0;
 	}
 
+	if (settings_name_steq(name, "thresh", NULL)) {
+		uint32_t value;
+		ssize_t rc;
+
+		if (len != sizeof(value)) {
+			return -EINVAL;
+		}
+		rc = read_cb(cb_arg, &value, sizeof(value));
+		if (rc != (ssize_t)sizeof(value)) return rc < 0 ? rc : -EINVAL;
+		if (!openfloat_valid_tuning_setting("thresh", value)) return -EINVAL;
+		shot_accel_threshold_mps2 = ((float)value / 100.0f) * MPS2_PER_G;
+		return 0;
+	}
+
 	if (settings_name_steq(name, "bufrate", NULL)) {
 		uint32_t value;
 		ssize_t rc;
@@ -1768,6 +1782,7 @@ static struct sleep_flush_values persistent_values_snapshot(void)
 		.followms = follow_through_ms,
 		.cant_offset = (int32_t)scale_float(cant_offset_deg, 1000.0f),
 		.pitch_offset = (int32_t)scale_float(pitch_offset_deg, 1000.0f),
+		.thresh = (uint32_t)scale_float(shot_accel_threshold_mps2 / MPS2_PER_G, 100.0f),
 	};
 }
 
@@ -2218,12 +2233,12 @@ static bool set_shot_threshold_from_command(const char *command)
 
 	shot_accel_threshold_mps2 = threshold_g * MPS2_PER_G;
 	print_threshold_g(threshold_g);
-	/* Report the applied value back on the same frames the browser already
-	 * reads. Without this count-sync the Settings page kept showing the value
-	 * from the subscribe-time frame — the boot default after a System OFF wake —
-	 * until the next reconnect, which read as "the threshold reverted".
+	/* Report the applied value back and persist it: a System OFF wake reboots
+	 * the device, and without the stored value the light-limb preset silently
+	 * fell back to 12 g (28 lb arrows then never trigger).
 	 */
 	ble_send_count_sync = true;
+	request_settings_save(BIT(SETTING_THRESH));
 	return true;
 }
 
@@ -3215,6 +3230,8 @@ int main(void)
 	printk("# wake_sensitivity restored: %d.%01d g\n",
 	       wake_tenths / 10, wake_tenths % 10);
 	printk("# sleep_timeout restored: %u s\n", disconnected_sleep_timeout_ms / 1000);
+	int32_t thresh_tenths = scale_float(shot_accel_threshold_mps2 / MPS2_PER_G, 10.0f);
+	printk("# shot_threshold restored: %d.%01d g\n", thresh_tenths / 10, thresh_tenths % 10);
 	int32_t sleep_sens_hundredths = scale_float(sleep_sensitivity_g, 100.0f);
 	printk("# sleep_sensitivity restored: %d.%02d g\n",
 	       sleep_sens_hundredths / 100, sleep_sens_hundredths % 100);

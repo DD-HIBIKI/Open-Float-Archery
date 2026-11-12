@@ -6,18 +6,19 @@
 #include <stdio.h>
 #include <string.h>
 
-#define SETTING_COUNT 12
+#define SETTING_COUNT 13
 static const char *const keys[SETTING_COUNT] = {
 	"openfloat/shots", "openfloat/shotlog", "openfloat/wakesens", "openfloat/sleeptime",
 	"openfloat/sleepsens", "openfloat/bufrate", "openfloat/bufnvs", "openfloat/autosleep",
 	"openfloat/streamrate", "openfloat/followms", "openfloat/cant_offset", "openfloat/pitch_offset",
+	"openfloat/thresh",
 };
-static const size_t sizes[SETTING_COUNT] = { 8, 2804, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4 };
+static const size_t sizes[SETTING_COUNT] = { 8, 2804, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4 };
 /* Independent frozen little-endian scalar values, including signed offsets. */
 static const uint8_t scalars[][4] = {
 	{0xd0, 0x07, 0, 0}, {0xe0, 0x93, 0x04, 0}, {0x96, 0, 0, 0}, {0x68, 0, 0, 0},
 	{1, 0, 0, 0}, {1, 0, 0, 0}, {5, 0, 0, 0}, {0xbe, 0x0a, 0, 0},
-	{0xc0, 0x1d, 0xfe, 0xff}, {0xd0, 0x07, 0, 0},
+	{0xc0, 0x1d, 0xfe, 0xff}, {0xd0, 0x07, 0, 0}, {0x32, 0, 0, 0},
 };
 struct setting_value { size_t size; uint8_t data[2804]; };
 struct trace_value { size_t size; uint8_t data[TRACE_STORE_PART_SIZE]; };
@@ -38,7 +39,7 @@ static const struct sleep_flush_values values = {
 	.counters = { 42, UINT32_MAX }, .queue = &queue,
 	.wakesens = 2000, .sleeptime = 300000, .sleepsens = 150,
 	.bufrate = 104, .bufnvs = 1, .autosleep = 1, .streamrate = 5, .followms = 2750,
-	.cant_offset = -123456, .pitch_offset = 2000,
+	.cant_offset = -123456, .pitch_offset = 2000, .thresh = 50,
 };
 
 static void copy_with_fault(uint8_t *dest, const void *data, size_t size, bool fail)
@@ -164,7 +165,7 @@ int main(void)
 	}
 	reset();
 	assert(!sleep_flush(&values, &io));
-	assert(backend.setting_calls == 12 && backend.trace_calls == 1 && !backend.delays);
+	assert(backend.setting_calls == 13 && backend.trace_calls == 1 && !backend.delays);
 	check_reboot();
 	for (unsigned int mode = 0; mode < 3; mode++) {
 		for (int key = 0; key < SETTING_COUNT; key++) {
@@ -201,6 +202,6 @@ int main(void)
 	assert(!sleep_flush(&values, &io));
 	assert(backend.setting_calls == 36 && backend.trace_attempts == 3 && backend.delays == 2);
 	check_reboot();
-	puts("Sleep flush: all 12 values, transient/permanent/torn faults at every setting and 34 trace writes, bounded retries, and reboot recovery passed.");
+	puts("Sleep flush: all 13 values, transient/permanent/torn faults at every setting and 34 trace writes, bounded retries, and reboot recovery passed.");
 	return 0;
 }

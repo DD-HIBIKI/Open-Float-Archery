@@ -60,6 +60,7 @@ int main(void)
 	const struct { const char *name; uint32_t minimum; uint32_t maximum; } ranges[] = {
 		{"wakesens", 500, 8000}, {"sleeptime", 5000, 600000}, {"sleepsens", 50, 500},
 		{"bufnvs", 0, 1}, {"autosleep", 0, 1}, {"followms", 0, 3000},
+		{"thresh", 50, 3000},
 	};
 	for (unsigned i = 0; i < sizeof(ranges) / sizeof(ranges[0]); i++) {
 		assert(openfloat_valid_tuning_setting(ranges[i].name, ranges[i].minimum));

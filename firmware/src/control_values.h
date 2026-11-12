@@ -80,6 +80,10 @@ static inline bool openfloat_valid_tuning_setting(const char *name, uint32_t val
 	if (!strcmp(name, "bufnvs") || !strcmp(name, "autosleep")) return value <= 1;
 	if (!strcmp(name, "streamrate")) return openfloat_valid_stream_divider(value);
 	if (!strcmp(name, "followms")) return value <= 3000;
+	/* Release threshold in centi-g (0.5-30 g); the command path clamps to the
+	 * same window, so anything outside it is corrupt.
+	 */
+	if (!strcmp(name, "thresh")) return value >= 50 && value <= 3000;
 	return false;
 }
 

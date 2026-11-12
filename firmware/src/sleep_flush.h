@@ -17,6 +17,9 @@ struct sleep_flush_values {
 	const struct stored_shot_log *queue;
 	uint32_t wakesens, sleeptime, sleepsens, bufrate, bufnvs, autosleep, streamrate, followms;
 	int32_t cant_offset, pitch_offset;
+	/* Applied release threshold in centi-g. Persisted so a System OFF wake
+	 * (which reboots) keeps the light-limb preset instead of 12 g. */
+	uint32_t thresh;
 };
 
 struct sleep_flush_io {

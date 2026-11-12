@@ -8,6 +8,7 @@ int boot_restore(const struct boot_restore_io *io)
 	static const char *const keys[] = {
 		"shots", "shotlog", "wakesens", "sleeptime", "sleepsens", "bufrate",
 		"bufnvs", "autosleep", "streamrate", "followms", "cant_offset", "pitch_offset",
+		"thresh",
 	};
 	int result = 0;
 	for (unsigned int attempt = 0; attempt < BOOT_RESTORE_ATTEMPTS; attempt++) {

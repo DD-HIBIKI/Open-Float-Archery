@@ -151,6 +151,7 @@ static int sleep_write_setting(void *context, const char *name, const void *data
 		"openfloat/shots", "openfloat/shotlog", "openfloat/wakesens", "openfloat/sleeptime",
 		"openfloat/sleepsens", "openfloat/bufrate", "openfloat/bufnvs", "openfloat/autosleep",
 		"openfloat/streamrate", "openfloat/followms", "openfloat/cant_offset", "openfloat/pitch_offset",
+		"openfloat/thresh",
 	};
 	for (unsigned int i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
 		if (strcmp(name, names[i])) continue;
@@ -189,7 +190,7 @@ static void check_sleep_flush(struct trace_store *store)
 		.counters = { 101, 70000 }, .queue = &log,
 		.wakesens = 2000, .sleeptime = 300000, .sleepsens = 150,
 		.bufrate = 52, .bufnvs = 1, .autosleep = 1, .streamrate = 1, .followms = 1500,
-		.cant_offset = -1234, .pitch_offset = 5678,
+		.cant_offset = -1234, .pitch_offset = 5678, .thresh = 50,
 	};
 	input.shot_id = 70000;
 	for (unsigned int i = 0; i < TRACE_CAPACITY; i++) input.points[i].roll_cdeg = (int16_t)(input.shot_id + i);
