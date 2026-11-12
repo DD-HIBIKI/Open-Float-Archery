@@ -133,7 +133,11 @@ static int restore_setting(void *context, const char *name)
 		restored.full_log_ids = (size_t)rc == sizeof(restored.log);
 		return 0;
 	}
-	if (name[0] == 't') return trace_restore(&restored.traces[name[1] - '0'], (uint8_t *)&scratch, (size_t)rc) ? 0 : -EBADMSG;
+	/* Trace slots are exactly "t0".."t9": the threshold setting also starts
+	 * with 't', so matching only the first character would route it here. */
+	if (name[0] == 't' && name[1] >= '0' && name[1] <= '9' && name[2] == '\0') {
+		return trace_restore(&restored.traces[name[1] - '0'], (uint8_t *)&scratch, (size_t)rc) ? 0 : -EBADMSG;
+	}
 	for (unsigned int i = 2; i < 13; i++) {
 		if (strcmp(name, ordinary[i])) continue;
 		if (rc != 4) return -EBADMSG;
