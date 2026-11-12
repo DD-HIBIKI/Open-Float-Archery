@@ -134,7 +134,7 @@ static int restore_setting(void *context, const char *name)
 		return 0;
 	}
 	if (name[0] == 't') return trace_restore(&restored.traces[name[1] - '0'], (uint8_t *)&scratch, (size_t)rc) ? 0 : -EBADMSG;
-	for (unsigned int i = 2; i < 12; i++) {
+	for (unsigned int i = 2; i < 13; i++) {
 		if (strcmp(name, ordinary[i])) continue;
 		if (rc != 4) return -EBADMSG;
 		int32_t value;
@@ -501,7 +501,7 @@ int main(void)
 	assert(!shot_log_append(&expected_log, &shot));
 	save("openfloat/shots", &expected_counters, sizeof(expected_counters));
 	save("openfloat/shotlog", &expected_log, sizeof(expected_log));
-	for (unsigned int i = 2; i < 12; i++) {
+	for (unsigned int i = 2; i < 13; i++) {
 		char key[32];
 		snprintf(key, sizeof(key), "openfloat/%s", ordinary[i]);
 		save(key, &tuning[i - 2], 4);
