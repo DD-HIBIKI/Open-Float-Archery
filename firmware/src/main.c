@@ -404,6 +404,17 @@ static void stop_pdm(void)
  */
 #define SHOT_REARM_QUIET_MS 300
 #define SHOT_REARM_FRACTION 0.5f
+/*
+ * Light-limb release gate. A real release is a sharp 1.5-5.6 g dynamic-
+ * acceleration impulse that starts from an otherwise still bow, while drawing,
+ * aiming and handling stay under ~0.9 g and happen while the bow is rotating.
+ * The impulse therefore both replaces the raw-magnitude test (gravity alone is
+ * 1 g, so a sub-1 g threshold was always true) and carries the timing: the old
+ * gyro-only gate fired whenever the bow rotated, which recorded 26 captures for
+ * 6 arrows on 2026-11-12, none of them at the actual release.
+ */
+#define SHOT_IMPULSE_MIN_G 1.5f
+#define SHOT_IMPULSE_QUIET_MS 300
 
 #define LED_IDLE_PERIOD_MS 500
 #define LED_SHOT_PULSE_MS 120
@@ -1432,6 +1443,7 @@ static bool detect_shot(const struct vec3 *accel, const struct vec3 *gyro, uint6
 {
 	static int64_t last_shot_ms;
 	static int64_t quiet_since_ms;
+	static int64_t last_gyro_loud_ms;
 	static bool armed = true;
 	float mag2 = (accel->x * accel->x) + (accel->y * accel->y) +
 		     (accel->z * accel->z);
@@ -1466,13 +1478,26 @@ static bool detect_shot(const struct vec3 *accel, const struct vec3 *gyro, uint6
 		armed = true;
 	}
 
-	/* Note: below 1 g the magnitude test is always true at rest, so a sub-1 g
-	 * preset is effectively gated by the gyro condition only, which is the
-	 * intended behaviour for a soft 28 lb release (measured peaks are ~1.2-1.4 g
-	 * total, i.e. well under 2 g but above 1 g of gravity).
+	/* See the SHOT_IMPULSE_MIN_G comment: below 1 g the raw magnitude is always
+	 * above the threshold, so fire on a dynamic impulse that starts while the
+	 * bow has not been rotating for SHOT_IMPULSE_QUIET_MS. At or above 1 g the
+	 * historical magnitude + gyro test is kept unchanged.
 	 */
-	if (armed && mag2 > thresh2 && gyro_mag2 > min_gyro_rad_s2 &&
-	    (now_ms - last_shot_ms) > SHOT_REFRACTORY_MS) {
+	bool gyro_now = gyro_mag2 > min_gyro_rad_s2;
+	bool bow_quiet = last_gyro_loud_ms == 0 ||
+		(now_ms - last_gyro_loud_ms) >= SHOT_IMPULSE_QUIET_MS;
+	bool accel_over;
+	if (threshold >= MPS2_PER_G) {
+		accel_over = mag2 > thresh2 && gyro_now;
+	} else {
+		float impulse_level = threshold > SHOT_IMPULSE_MIN_G * MPS2_PER_G ?
+			threshold : SHOT_IMPULSE_MIN_G * MPS2_PER_G;
+		accel_over = a_dev > impulse_level && bow_quiet;
+	}
+	if (gyro_now) {
+		last_gyro_loud_ms = now_ms;
+	}
+	if (armed && accel_over && (now_ms - last_shot_ms) > SHOT_REFRACTORY_MS) {
 		last_shot_ms = now_ms;
 		armed = false;
 		quiet_since_ms = 0;
@@ -2144,6 +2169,12 @@ static bool set_shot_threshold_from_command(const char *command)
 
 	shot_accel_threshold_mps2 = threshold_g * MPS2_PER_G;
 	print_threshold_g(threshold_g);
+	/* Report the applied value back on the same frames the browser already
+	 * reads. Without this count-sync the Settings page kept showing the value
+	 * from the subscribe-time frame — the boot default after a System OFF wake —
+	 * until the next reconnect, which read as "the threshold reverted".
+	 */
+	ble_send_count_sync = true;
 	return true;
 }
 
