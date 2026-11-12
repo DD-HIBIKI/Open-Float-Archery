@@ -139,7 +139,7 @@ static int restore_setting(void *context, const char *name)
 		if (rc != 4) return -EBADMSG;
 		int32_t value;
 		memcpy(&value, &scratch, 4);
-		bool valid = i < 11 ? openfloat_valid_tuning_setting(name, (uint32_t)value) : true;
+		bool valid = i < 10 ? openfloat_valid_tuning_setting(name, (uint32_t)value) : true;
 		if (!valid) return -EBADMSG;
 		assert(value == tuning[i - 2]);
 		restored.tunings[i - 2] = true;
