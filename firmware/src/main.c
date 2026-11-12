@@ -415,6 +415,14 @@ static void stop_pdm(void)
  */
 #define SHOT_IMPULSE_MIN_G 1.5f
 #define SHOT_IMPULSE_QUIET_MS 300
+/*
+ * A release impulse is followed by the bow's follow-through rotation within a
+ * few hundred milliseconds; a tap, bump or the bow being set down is not.
+ * Measured 2026-11-12: real arrows rotate at 130-160 deg/s within 170-370 ms of
+ * the impulse, while the false captures seen so far stay under 45 deg/s. Hold
+ * the trigger that long for the rotation before recording anything.
+ */
+#define SHOT_CONFIRM_MS 500
 
 #define LED_IDLE_PERIOD_MS 500
 #define LED_SHOT_PULSE_MS 120
@@ -1437,9 +1445,22 @@ static void update_user_led(void)
 	(void)gpio_pin_set_dt(&user_led, led_on);
 }
 
+/* The sample that triggered the capture. For the light-limb gate this is the
+ * impulse sample, not the later follow-through sample, so the browser can align
+ * the trace (and its scoring windows) to the release.
+ */
+struct shot_trigger_sample {
+	struct vec3 accel;
+	float roll_deg, pitch_deg, yaw_deg;
+	uint16_t sequence;
+	int64_t at_ms;
+};
+static struct shot_trigger_sample shot_trigger;
+static int64_t shot_confirm_deadline_ms;
+
 /* Returns true if a new shot was detected on this call. */
 static bool detect_shot(const struct vec3 *accel, const struct vec3 *gyro, uint64_t now_us,
-			float roll_deg, float pitch_deg, float yaw_deg)
+			float roll_deg, float pitch_deg, float yaw_deg, uint16_t sequence)
 {
 	static int64_t last_shot_ms;
 	static int64_t quiet_since_ms;
@@ -1474,7 +1495,8 @@ static bool detect_shot(const struct vec3 *accel, const struct vec3 *gyro, uint6
 	} else {
 		quiet_since_ms = 0;
 	}
-	if (!armed && quiet_since_ms != 0 && (now_ms - quiet_since_ms) >= SHOT_REARM_QUIET_MS) {
+	if (!armed && shot_confirm_deadline_ms == 0 && quiet_since_ms != 0 &&
+	    (now_ms - quiet_since_ms) >= SHOT_REARM_QUIET_MS) {
 		armed = true;
 	}
 
@@ -1486,21 +1508,48 @@ static bool detect_shot(const struct vec3 *accel, const struct vec3 *gyro, uint6
 	bool gyro_now = gyro_mag2 > min_gyro_rad_s2;
 	bool bow_quiet = last_gyro_loud_ms == 0 ||
 		(now_ms - last_gyro_loud_ms) >= SHOT_IMPULSE_QUIET_MS;
+	bool deferred = threshold < MPS2_PER_G;
 	bool accel_over;
-	if (threshold >= MPS2_PER_G) {
+	if (!deferred) {
 		accel_over = mag2 > thresh2 && gyro_now;
 	} else {
 		float impulse_level = threshold > SHOT_IMPULSE_MIN_G * MPS2_PER_G ?
 			threshold : SHOT_IMPULSE_MIN_G * MPS2_PER_G;
 		accel_over = a_dev > impulse_level && bow_quiet;
 	}
+	/* Light-limb captures wait for the follow-through rotation (see
+	 * SHOT_CONFIRM_MS); the trigger keeps the impulse sample so the browser
+	 * still aligns the trace to the release.
+	 */
+	if (deferred && shot_confirm_deadline_ms != 0) {
+		if (gyro_now) {
+			shot_confirm_deadline_ms = 0;
+			last_shot_ms = shot_trigger.at_ms;
+			quiet_since_ms = 0;
+			return true;
+		}
+		if (now_ms > shot_confirm_deadline_ms) {
+			/* No follow-through: not a release. Stay disarmed until the
+			 * quiet re-arm sees the bow settle again. */
+			shot_confirm_deadline_ms = 0;
+		}
+	}
+
 	if (gyro_now) {
 		last_gyro_loud_ms = now_ms;
 	}
 	if (armed && accel_over && (now_ms - last_shot_ms) > SHOT_REFRACTORY_MS) {
-		last_shot_ms = now_ms;
+		shot_trigger = (struct shot_trigger_sample){
+			.accel = *accel, .roll_deg = roll_deg, .pitch_deg = pitch_deg,
+			.yaw_deg = yaw_deg, .sequence = sequence, .at_ms = now_ms,
+		};
 		armed = false;
 		quiet_since_ms = 0;
+		if (deferred) {
+			shot_confirm_deadline_ms = now_ms + SHOT_CONFIRM_MS;
+			return false;
+		}
+		last_shot_ms = now_ms;
 		return true;
 	}
 
@@ -3325,8 +3374,20 @@ int main(void)
 				simulate_shot = true;
 			}
 
-			if (simulate_shot || detect_shot(&avg_accel, &avg_gyro, uptime_us(), roll_deg,
-					pitch_deg, yaw_deg)) {
+			bool shot = false;
+			if (simulate_shot) {
+				shot_trigger = (struct shot_trigger_sample){
+					.accel = avg_accel, .roll_deg = roll_deg,
+					.pitch_deg = pitch_deg, .yaw_deg = yaw_deg,
+					.sequence = (uint16_t)telemetry_sequence,
+					.at_ms = k_uptime_get(),
+				};
+				shot = true;
+			} else {
+				shot = detect_shot(&avg_accel, &avg_gyro, uptime_us(), roll_deg,
+						   pitch_deg, yaw_deg, (uint16_t)telemetry_sequence);
+			}
+			if (shot) {
 				shot_detected = true;
 				last_activity_time_ms = k_uptime_get();
 
@@ -3335,19 +3396,21 @@ int main(void)
 				struct openfloat_shot_counters release = shot_counters;
 				k_mutex_unlock(&shot_counter_mutex);
 
-				last_shot_accel = avg_accel;
-				last_shot_sequence = (uint16_t)telemetry_sequence;
+				last_shot_accel = shot_trigger.accel;
+				last_shot_sequence = shot_trigger.sequence;
 				last_shot_record = (struct stored_shot){
 					.shot_count = (uint16_t)release.count,
 					.shot_id = release.shot_id,
-					.ax_mg = clamp_i16(scale_float(avg_accel.x, SCALE_MG)),
-					.ay_mg = clamp_i16(scale_float(avg_accel.y, SCALE_MG)),
-					.az_mg = clamp_i16(scale_float(avg_accel.z, SCALE_MG)),
+					.ax_mg = clamp_i16(scale_float(shot_trigger.accel.x, SCALE_MG)),
+					.ay_mg = clamp_i16(scale_float(shot_trigger.accel.y, SCALE_MG)),
+					.az_mg = clamp_i16(scale_float(shot_trigger.accel.z, SCALE_MG)),
 					.threshold_cg = (uint16_t)scale_float(
 						shot_accel_threshold_mps2 / MPS2_PER_G, 100.0f),
-					.roll_cdeg = clamp_i16(scale_float(roll_deg - cant_offset_deg, SCALE_CDEG)),
-					.pitch_cdeg = clamp_i16(scale_float(pitch_deg - pitch_offset_deg, SCALE_CDEG)),
-					.yaw_cdeg = clamp_i16(scale_float(yaw_deg, SCALE_CDEG)),
+					.roll_cdeg = clamp_i16(scale_float(
+						shot_trigger.roll_deg - cant_offset_deg, SCALE_CDEG)),
+					.pitch_cdeg = clamp_i16(scale_float(
+						shot_trigger.pitch_deg - pitch_offset_deg, SCALE_CDEG)),
+					.yaw_cdeg = clamp_i16(scale_float(shot_trigger.yaw_deg, SCALE_CDEG)),
 					.clicker_dt_ms = 0,
 					.impact_dt_ms = 0,
 				};
@@ -3370,9 +3433,9 @@ int main(void)
 				printk("OFSHOT,1,%u,%llu,%d,%d,%d,%u,0,0\n",
 				       release.shot_id,
 				       (unsigned long long)uptime_us(),
-				       scale_float(avg_accel.x, SCALE_MG),
-				       scale_float(avg_accel.y, SCALE_MG),
-				       scale_float(avg_accel.z, SCALE_MG),
+				       scale_float(shot_trigger.accel.x, SCALE_MG),
+				       scale_float(shot_trigger.accel.y, SCALE_MG),
+				       scale_float(shot_trigger.accel.z, SCALE_MG),
 				       release.count);
 
 				(void)notify_openfloat_shot_event(2);
