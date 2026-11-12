@@ -330,7 +330,7 @@ static void initialize_awake(void)
 	awake.values = (struct sleep_flush_values){ .counters = { 43, 90000 }, .queue = &awake.log,
 		.wakesens = 2500, .sleeptime = 500000, .sleepsens = 200, .bufrate = 104,
 		.bufnvs = 0, .autosleep = 1, .streamrate = 2, .followms = 2000,
-		.cant_offset = -8000, .pitch_offset = 2200 };
+		.cant_offset = -8000, .pitch_offset = 2200, .thresh = 50 };
 	settings_retry_request(&awake.queue, SETTINGS_ALL, 0);
 }
 static void check_awake_recovery(void)
